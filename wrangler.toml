@@ -44,7 +44,7 @@ enabled = true
 # Run `npx wrangler kv namespace list` and paste the real id here to deploy.
 [[kv_namespaces]]
 binding = "KV"
-id = "dotnet_test"
+id = "c9801713fc8e4b94b28ae07c17f91f53"
 
 # R2 bucket "dotnettest", holding the single object "sample_file.txt" of the R2
 # sample. Run `npx wrangler r2 bucket create dotnettest` to deploy it.
