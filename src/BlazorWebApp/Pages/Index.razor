@@ -1,5 +1,6 @@
 @page "/"
 @inject HttpClient Http
+@inject IConfiguration Config
 @using global::Shared
 
 <PageTitle>Cloudflare Workers .NET Samples</PageTitle>
@@ -48,6 +49,11 @@
 </div>
 
 @code {
+    // Base URL for the worker API. Configured via wwwroot/appsettings.json
+    // ("" = same domain as the deployed Blazor site) or
+    // wwwroot/appsettings.Development.json (separate local dev port).
+    private string ApiBase => (Config["ApiBaseUrl"] ?? "").TrimEnd('/');
+
     private bool busy;
     private string jsonResult = "";
     private string proxyResult = "";
@@ -61,7 +67,7 @@
     {
         await RunAsync(async () =>
         {
-            var r = await Http.GetFromJsonAsync<ApiResponse>("/api/json");
+            var r = await Http.GetFromJsonAsync<ApiResponse>(ApiBase + "/api/json");
             jsonResult = r is null
                 ? "No response"
                 : $"ok={r.Ok} message=\"{r.Message}\" path=\"{r.Path}\" at={r.Timestamp:O}";
@@ -72,7 +78,7 @@
     {
         await RunAsync(async () =>
         {
-            var resp = await Http.GetAsync($"/api/proxy?url={Uri.EscapeDataString(proxyUrl)}");
+            var resp = await Http.GetAsync(ApiBase + "/api/proxy?url=" + Uri.EscapeDataString(proxyUrl));
             var body = await resp.Content.ReadAsStringAsync();
             var proxiedBy = resp.Headers.TryGetValues("x-proxied-by", out var v) ? string.Join(",", v) : "n/a";
             proxyResult = "status=" + (int)resp.StatusCode + " " + resp.StatusCode + "\n" +
@@ -85,7 +91,7 @@
         await RunAsync(async () =>
         {
             // Fetch the redirect without auto-following so we can read the Location header.
-            var resp = await Http.GetAsync($"/api/redirect?to={Uri.EscapeDataString(redirectUrl)}", HttpCompletionOption.ResponseHeadersRead);
+            var resp = await Http.GetAsync(ApiBase + "/api/redirect?to=" + Uri.EscapeDataString(redirectUrl), HttpCompletionOption.ResponseHeadersRead);
             redirectResult = $"status={(int)resp.StatusCode} {resp.StatusCode}\nlocation={resp.Headers.Location}";
         });
     }
@@ -98,7 +104,7 @@
     {
         await RunAsync(async () =>
         {
-            var resp = await Http.PostAsJsonAsync("/api/policy", input);
+            var resp = await Http.PostAsJsonAsync(ApiBase + "/api/policy", input);
             var body = await resp.Content.ReadAsStringAsync();
             policyResult = $"status={(int)resp.StatusCode} {resp.StatusCode}\n{body}";
         });

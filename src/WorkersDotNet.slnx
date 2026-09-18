@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="Aspire/Aspire.AppHost/Aspire.AppHost.csproj" Id="cac365b5-619e-41c2-ac4f-7569164a3161" />
+  <Project Path="Aspire/Aspire.ServiceDefaults/Aspire.ServiceDefaults.csproj" />
   <Project Path="BlazorWebApp/BlazorWebApp.csproj" Id="5f8fefb7-f240-4c62-b080-9ab0875296db" />
   <Project Path="Shared/Shared.csproj" />
   <Project Path="WorkersDotNet/WorkersDotNet.csproj" />

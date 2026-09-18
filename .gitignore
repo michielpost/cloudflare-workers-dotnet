@@ -428,3 +428,9 @@ FodyWeavers.xsd
 *.msm
 *.msp
 /src/WorkersDotNet/dist
+
+# Cloudflare Worker build artifacts
+.wrangler/
+publish-blazor/
+dotnet-install.sh
+dotnet/

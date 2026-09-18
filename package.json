@@ -1,0 +1,7 @@
+{
+  "name": "cloudflare-workers-dotnet",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "^4.134.0"
+  }
+}

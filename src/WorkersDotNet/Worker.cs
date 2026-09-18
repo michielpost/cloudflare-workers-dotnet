@@ -12,37 +12,68 @@ namespace WorkersDotNet
             Env environment,
             Context context)
         {
+            var origin = request.Headers.Get("origin");
+
+            // Browser CORS preflight for cross-origin calls from the frontend
+            // (e.g. the Blazor app served by Aspire on a separate port).
+            if (request.Method == "OPTIONS")
+                return CorsPreflight(origin);
+
             var path = request.Path;
 
-            // JSON response using a shared model (also used by the Blazor frontend)
+            Response response;
             if (path == "/api/json")
-                return Response.Json(new ApiResponse(
+            {
+                // JSON response using a shared model (also used by the Blazor frontend)
+                response = Response.Json(new ApiResponse(
                     true,
-                    "Hello from C# on Cloudflare Workers.",
+                    "Hello from C# on Cloudflare Workers. 11!",
                     path,
                     DateTimeOffset.UtcNow));
-
-            // Proxy fetch
-            if (path == "/api/proxy")
+            }
+            else if (path == "/api/proxy")
             {
                 var target = request.QueryParameters.Get("url") ?? "https://example.com";
                 var proxied = await Http.FetchAsync(target);
-                return proxied.WithHeader("x-proxied-by", "Workers");
+                response = proxied.WithHeader("x-proxied-by", "Workers");
             }
-
-            // Redirect
-            if (path == "/api/redirect")
+            else if (path == "/api/redirect")
             {
                 var location = request.QueryParameters.Get("to") ?? "https://example.com";
-                return Response.Redirect(location, status: 302);
+                response = Response.Redirect(location, status: 302);
+            }
+            else if (path == "/api/policy")
+            {
+                response = await HandlePolicyAsync(request);
+            }
+            else
+            {
+                // Serve the BlazorWebApp as static files via the ASSETS binding.
+                response = await environment.Assets("ASSETS").FetchAsync(request);
             }
 
-            // Request policy: only accepts a validated JSON POST with a bounded body
-            if (path == "/api/policy")
-                return await HandlePolicyAsync(request);
+            // Allow the originating frontend domain to read the response.
+            return ApplyCors(response, origin);
+        }
 
-            // Serve the BlazorWebApp as static files via the ASSETS binding.
-            return await environment.Assets("ASSETS").FetchAsync(request);
+        // Echo the caller's Origin so the Aspire frontend (dynamic port) is
+        // allowed; fall back to "*" for requests without an Origin (e.g. curl).
+        private static string CorsOrigin(string? origin) =>
+            origin is null || origin.Length == 0 ? "*" : origin;
+
+        private static Response CorsPreflight(string? origin)
+        {
+            var allowed = CorsOrigin(origin);
+            return Response.Empty(204)
+                .WithHeader("access-control-allow-origin", allowed)
+                .WithHeader("access-control-allow-methods", "GET, POST, OPTIONS")
+                .WithHeader("access-control-allow-headers", "content-type");
+        }
+
+        private static Response ApplyCors(Response response, string? origin)
+        {
+            var allowed = CorsOrigin(origin);
+            return response.WithHeader("access-control-allow-origin", allowed);
         }
 
         private static async Task<Response> HandlePolicyAsync(Request request)

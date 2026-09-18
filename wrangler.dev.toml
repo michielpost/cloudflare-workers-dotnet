@@ -1,0 +1,21 @@
+name = "cloudflare-workers-dotnet"
+main = "src/WorkersDotNet/dist/worker.js"
+compatibility_date = "2026-06-30"
+
+# Local development config. It intentionally has NO [build] step: the C# worker
+# and the Blazor static files are pre-compiled into src/WorkersDotNet/dist/ by
+# cloudflarebuild.sh (run once before `wrangler dev`). Running the dotnet build
+# through wrangler here causes an infinite restart loop on Windows because the
+# build rewrites files under the watched repo root (obj/, bin/, .vs/, dist/).
+#
+# Rebuild before dev when Worker.cs / Blazor changes:
+#   sh cloudflarebuild.sh        (or: dotnet publish src/WorkersDotNet -c Release)
+# The [build] step in wrangler.toml (used for Cloudflare deploy) is unchanged.
+
+# Serve the published BlazorWebApp as static files. worker.js handles
+# server logic and falls back to these assets (and index.html for SPA routes).
+[assets]
+directory = "src/WorkersDotNet/dist/wwwroot"
+binding = "ASSETS"
+run_worker_first = true
+not_found_handling = "single-page-application"
