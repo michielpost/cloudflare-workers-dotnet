@@ -3,4 +3,4 @@ main = "src/WorkersDotNet/dist/worker.js"
 compatibility_date = "2026-06-30"
 
 [build]
-command = "dotnet publish -c Release -p:NuGetAudit=false"
+command = "dotnet publish src -c Release -p:NuGetAudit=false"
