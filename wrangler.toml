@@ -3,4 +3,4 @@ main = "src/WorkersDotNet/dist/worker.js"
 compatibility_date = "2026-06-30"
 
 [build]
-command = "./cloudflarebuild.sh"
+command = "sh cloudflarebuild.sh"
