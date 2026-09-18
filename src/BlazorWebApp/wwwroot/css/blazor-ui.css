@@ -339,6 +339,10 @@ code,
     font-size: 1.7rem;
 }
 
+.page-header h1:focus {
+    outline: none;
+}
+
 .page-subtitle {
     margin: .35rem 0 0;
     color: var(--text-dim);
