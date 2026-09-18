@@ -30,7 +30,11 @@
 
     <section style="margin-top:1.5rem;">
         <h2>Redirect</h2>
-        <p>Worker issues a 302 redirect to the given URL.</p>
+        <p>
+            Worker issues a 302 redirect to the given URL. Browser <code>fetch</code> calls cannot follow a
+            cross-origin 302 unless the target sends CORS headers, so for those the worker answers with the
+            target in a <code>location</code> header instead; direct navigations still receive a real 302.
+        </p>
         <input @bind="redirectUrl" style="width:60%" />
         <button class="btn" @onclick="CallRedirect" disabled="@busy">Redirect</button>
         <pre class="result">@redirectResult</pre>
@@ -90,7 +94,9 @@
     {
         await RunAsync(async () =>
         {
-            // Fetch the redirect without auto-following so we can read the Location header.
+            // Ask the worker where the redirect points. The browser would fail the
+            // CORS check if it auto-followed a cross-origin 302, so the worker
+            // returns the target in the location header for fetch callers.
             var resp = await Http.GetAsync(ApiBase + "/api/redirect?to=" + Uri.EscapeDataString(redirectUrl), HttpCompletionOption.ResponseHeadersRead);
             redirectResult = $"status={(int)resp.StatusCode} {resp.StatusCode}\nlocation={resp.Headers.Location}";
         });
