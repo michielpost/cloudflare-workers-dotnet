@@ -31,13 +31,15 @@
     <section style="margin-top:1.5rem;">
         <h2>Redirect</h2>
         <p>
-            Worker issues a 302 redirect to the given URL. Browser <code>fetch</code> calls cannot follow a
+            Worker issues a 302 redirect to the given URL. Open the worker URL below in a new window to see
+            it: top-level navigations receive a real 302. Browser <code>fetch</code> calls cannot follow a
             cross-origin 302 unless the target sends CORS headers, so for those the worker answers with the
-            target in a <code>location</code> header instead; direct navigations still receive a real 302.
+            target in a <code>location</code> header instead.
         </p>
         <input @bind="redirectUrl" style="width:60%" />
-        <button class="btn" @onclick="CallRedirect" disabled="@busy">Redirect</button>
-        <pre class="result">@redirectResult</pre>
+        <p>
+            <a href="@RedirectUrl" target="_blank" rel="noopener noreferrer">@RedirectUrl</a>
+        </p>
     </section>
 
     <section style="margin-top:1.5rem;">
@@ -61,11 +63,14 @@
     private bool busy;
     private string jsonResult = "";
     private string proxyResult = "";
-    private string redirectResult = "";
     private string policyResult = "";
 
     private string proxyUrl = "https://example.com";
     private string redirectUrl = "https://example.com";
+
+    // The worker URL that triggers the redirect. Navigating to it (rather than
+    // fetching) lets the browser follow the 302, so it is offered as a link.
+    private string RedirectUrl => ApiBase + "/api/redirect?to=" + Uri.EscapeDataString(redirectUrl);
 
     private async Task CallJson()
     {
@@ -87,18 +92,6 @@
             var proxiedBy = resp.Headers.TryGetValues("x-proxied-by", out var v) ? string.Join(",", v) : "n/a";
             proxyResult = "status=" + (int)resp.StatusCode + " " + resp.StatusCode + "\n" +
                           "x-proxied-by=" + proxiedBy + "\n\n" + body;
-        });
-    }
-
-    private async Task CallRedirect()
-    {
-        await RunAsync(async () =>
-        {
-            // Ask the worker where the redirect points. The browser would fail the
-            // CORS check if it auto-followed a cross-origin 302, so the worker
-            // returns the target in the location header for fetch callers.
-            var resp = await Http.GetAsync(ApiBase + "/api/redirect?to=" + Uri.EscapeDataString(redirectUrl), HttpCompletionOption.ResponseHeadersRead);
-            redirectResult = $"status={(int)resp.StatusCode} {resp.StatusCode}\nlocation={resp.Headers.Location}";
         });
     }
 
