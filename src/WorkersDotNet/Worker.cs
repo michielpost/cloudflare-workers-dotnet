@@ -5,15 +5,21 @@ namespace WorkersDotNet
     public static class Worker
     {
         [Fetch]
-        public static Task<Response> FetchAsync(
+        public static async Task<Response> FetchAsync(
             Request request,
             Env environment,
             Context context)
         {
-            if (request.Path == "/")
-                return Task.FromResult(Response.Text("Hello from C# on Cloudflare Workers."));
+            // Server-side logic: handle API routes here.
+            if (request.Path.StartsWith("/api/"))
+            {
+                return Response.Json(new { message = "Hello from C# on Cloudflare Workers.", path = request.Path });
+            }
 
-            return Task.FromResult(Response.Text("Not found", status: 404));
+            // Serve the BlazorWebApp as static files via the ASSETS binding.
+            // not_found_handling = "single-page-application" in wrangler.toml
+            // makes unknown asset paths fall back to index.html for SPA routing.
+            return await environment.Assets("ASSETS").FetchAsync(request);
         }
     }
 }

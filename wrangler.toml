@@ -1,6 +1,14 @@
-name = "michiel-dotnet-workers"
+name = "cloudflare-workers-dotnet"
 main = "src/WorkersDotNet/dist/worker.js"
 compatibility_date = "2026-06-30"
+
+# Serve the published BlazorWebApp as static files. worker.js handles
+# server logic and falls back to these assets (and index.html for SPA routes).
+[assets]
+directory = "src/WorkersDotNet/dist/wwwroot"
+binding = "ASSETS"
+run_worker_first = true
+not_found_handling = "single-page-application"
 
 [build]
 command = "sh cloudflarebuild.sh"
