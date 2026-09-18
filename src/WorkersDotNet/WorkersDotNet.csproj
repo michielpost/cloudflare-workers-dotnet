@@ -10,4 +10,10 @@
     <PackageReference Include="Workers" Version="0.3.0" />
   </ItemGroup>
 
+  <!-- The Workers compiler compiles this project's source files (via @(Compile)),
+       so link the shared model into the worker build. -->
+  <ItemGroup>
+    <Compile Include="../Shared/Models.cs" Link="Shared/Models.cs" />
+  </ItemGroup>
+
 </Project>
