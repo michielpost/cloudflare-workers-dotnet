@@ -9,15 +9,16 @@ builder.AddProject<Projects.BlazorWebApp>("blazor");
 // Cloudflare Worker: the C# source in src/WorkersDotNet is compiled to
 // src/WorkersDotNet/dist/worker.js (see cloudflarebuild.sh + [build] in
 // wrangler.toml) and served by Wrangler's dev server on port 8787.
-// Local dev uses wrangler.dev.toml (no [build] step) so the pre-built dist is
-// served without wrangler triggering an infinite dotnet rebuild loop.
+// Local dev runs the "worker:dev" npm script, which publishes WorkersDotNet
+// (so the served worker.js is always up to date) and then starts Wrangler
+// with wrangler.dev.toml (no [build] step, avoiding an infinite rebuild loop).
 builder.AddExecutable(
         name: "cloudflare-worker",
-        command: "npx",
-        // wrangler.toml lives at the repo root; this path is relative to the
-        // AppHost project directory (src/Aspire/Aspire.AppHost).
+        command: "npm",
+        // wrangler.toml and package.json live at the repo root; this path is
+        // relative to the AppHost project directory (src/Aspire/Aspire.AppHost).
         workingDirectory: "../../..",
-        args: new[] { "wrangler", "dev", "-c", "wrangler.dev.toml", "--port", "8787" })
+        args: new[] { "run", "worker:dev" })
     .WithEnvironment("ENVIRONMENT", "Development");
 
 builder.Build().Run();

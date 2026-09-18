@@ -27,7 +27,7 @@ namespace WorkersDotNet
                 // JSON response using a shared model (also used by the Blazor frontend)
                 response = Response.Json(new ApiResponse(
                     true,
-                    "Hello from C# on Cloudflare Workers. 11!",
+                    "Hello from C# on Cloudflare Workers. 22!",
                     path,
                     DateTimeOffset.UtcNow));
             }
