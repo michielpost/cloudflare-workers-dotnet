@@ -185,7 +185,8 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync(track: false);
-        StartAutoRefresh();
+        if (!Api.IsPrerendering)
+            StartAutoRefresh();
     }
 
     void StartAutoRefresh()

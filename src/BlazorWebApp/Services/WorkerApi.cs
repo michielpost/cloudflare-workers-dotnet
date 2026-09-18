@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Shared;
 
 namespace BlazorWebApp.Services;
@@ -88,14 +89,18 @@ public sealed class WorkerApi
 
     readonly HttpClient _http;
 
-    public WorkerApi(HttpClient http, IConfiguration config)
+    public WorkerApi(HttpClient http, IConfiguration config, IWebAssemblyHostEnvironment hostEnvironment)
     {
         _http = http;
         BaseUrl = (config["ApiBaseUrl"] ?? "").TrimEnd('/');
+        IsPrerendering = string.Equals(hostEnvironment.Environment, "Prerendering", StringComparison.Ordinal);
     }
 
     /// <summary>Base URL of the worker, e.g. http://localhost:8787 during local dev.</summary>
     public string BaseUrl { get; }
+
+    /// <summary>True while the build-time prerenderer is rendering static pages.</summary>
+    public bool IsPrerendering { get; }
 
     /// <summary>Base URL shown in the UI; an empty base means "same origin as this page".</summary>
     public string DisplayBaseUrl => BaseUrl.Length == 0
@@ -147,6 +152,9 @@ public sealed class WorkerApi
         string path,
         CancellationToken cancellationToken = default)
     {
+        if (IsPrerendering)
+            return new DownloadResult<T>(SkippedResult<T>(), [], "", null, "");
+
         var request = new HttpRequestMessage(HttpMethod.Get, Url(path));
         var stopwatch = Stopwatch.StartNew();
 
@@ -194,6 +202,9 @@ public sealed class WorkerApi
         string? highlightHeader,
         CancellationToken cancellationToken)
     {
+        if (IsPrerendering)
+            return SkippedResult<T>();
+
         var stopwatch = Stopwatch.StartNew();
 
         try
@@ -229,6 +240,11 @@ public sealed class WorkerApi
             };
         }
     }
+
+    static ApiResult<T> SkippedResult<T>() => new()
+    {
+        Reason = "Skipped during prerendering"
+    };
 
     static IReadOnlyDictionary<string, string> CollectHeaders(HttpResponseMessage response)
     {

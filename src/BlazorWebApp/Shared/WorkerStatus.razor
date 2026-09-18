@@ -16,6 +16,13 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (Api.IsPrerendering)
+        {
+            stateClass = "worker-status-unknown";
+            text = "worker check deferred";
+            return;
+        }
+
         await CheckAsync();
 
         // The worker may be started after this page (Aspire starts both), so keep
