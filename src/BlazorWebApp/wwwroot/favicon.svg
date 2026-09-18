@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Cloudflare Workers .NET</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7b733"/>
+      <stop offset="1" stop-color="#f6821f"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="#141a2b"/>
+  <path fill="url(#bg)" d="M16 17h32a5 5 0 0 1 5 5v20a5 5 0 0 1-5 5H16a5 5 0 0 1-5-5V22a5 5 0 0 1 5-5Zm0 5v20h32V22H16Z"/>
+  <path fill="#f7b733" d="M21 28h5v12h-5zm9 0h5v12h-5zm9 0h5v12h-5z"/>
+  <path fill="#e9edf9" d="M18 13h28v5H18z"/>
+</svg>
