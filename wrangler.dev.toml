@@ -70,8 +70,8 @@ queue = "dotnet-queue"
 # telemetry pipeline (sensors, readings, jobs); see migrations/0001_init.sql.
 # Locally wrangler keeps a SQLite copy of it under .wrangler/state/v3/d1, keyed by
 # database_id, so the same id is used here and in wrangler.toml and local writes
-# survive a restart. Apply the schema once with
-#   npx wrangler d1 execute dotnet --local --file=migrations/0001_init.sql
+# survive a restart. Apply the migrations once with
+#   npx wrangler d1 migrations apply dotnet --local -c wrangler.dev.toml
 [[d1_databases]]
 binding = "DB"
 database_name = "dotnet"

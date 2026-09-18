@@ -8,9 +8,10 @@
 --   readings   when each one is polled next, plus the reading itself
 --   jobs     - one row per telemetry job, so the pipeline's progress is visible
 --
--- Every statement is idempotent, so this file can be applied repeatedly with
---   npx wrangler d1 execute dotnet --local  --file=migrations/0001_init.sql
---   npx wrangler d1 execute dotnet --remote --file=migrations/0001_init.sql
+-- Wrangler tracks this migration and applies it with
+--   npx wrangler d1 migrations apply dotnet --local
+--   npx wrangler d1 migrations apply dotnet --remote
+-- The statements are also idempotent for safe recovery/replay.
 
 -- ---------------------------------------------------------------------------
 -- D1 CRUD sample

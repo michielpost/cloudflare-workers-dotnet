@@ -11,7 +11,9 @@ run_worker_first = true
 not_found_handling = "single-page-application"
 
 [build]
-command = "sh cloudflarebuild.sh"
+# Apply pending remote D1 migrations before building and deploying the worker.
+# Wrangler skips the confirmation prompt in non-interactive deploy builds.
+command = "npx wrangler d1 migrations apply dotnet --remote && sh cloudflarebuild.sh"
 
 # Origins allowed to call this worker cross-origin, as a comma-separated list.
 # There is no wildcard: an origin must match exactly, and an empty list grants
@@ -65,7 +67,7 @@ queue = "dotnet-queue"
 # (tables sensors, readings, jobs). Create it with
 #   npx wrangler d1 create dotnet
 # and put the printed id here; then apply the schema to the deployed database with
-#   npx wrangler d1 execute dotnet --remote --file=migrations/0001_init.sql
+#   npx wrangler d1 migrations apply dotnet --remote
 [[d1_databases]]
 binding = "DB"
 database_name = "dotnet"

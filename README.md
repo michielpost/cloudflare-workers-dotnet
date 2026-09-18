@@ -50,10 +50,11 @@ This starts the Blazor frontend and the worker, and opens the Aspire dashboard w
 logs and endpoints for both.
 
 The D1 sample needs its schema once: `wrangler dev` creates an empty local database, but does not run
-`migrations/`. Apply it to the local copy before the first run (or whenever you change it):
+`migrations/`. Apply the migrations to the local copy before the first run (or whenever you change
+them):
 
 ```bash
-npx wrangler d1 execute dotnet --local -c wrangler.dev.toml --file=migrations/0001_init.sql
+npx wrangler d1 migrations apply dotnet --local -c wrangler.dev.toml
 ```
 
 That writes the tables `items`, `sensors`, `readings` and `jobs` and seeds three sensors into
@@ -234,14 +235,10 @@ npx wrangler kv namespace create dotnet_test     # paste the printed id into [[k
 npx wrangler d1 create dotnet                    # paste the printed id into [[d1_databases]]
 ```
 
-Then create the D1 schema in the deployed database — this is a separate step from deploying, and
-without it every D1 and telemetry call fails:
-
-```bash
-npx wrangler d1 execute dotnet --remote --file=migrations/0001_init.sql
-```
-
-Then deploy:
+The deploy build command applies pending remote D1 migrations automatically before publishing the
+worker. `migrations_dir` tells Wrangler where the migrations are, and the `[build]` command in
+`wrangler.toml` runs `npx wrangler d1 migrations apply dotnet --remote` before the normal build.
+Without the migration step, every D1 and telemetry call fails. Deploy with:
 
 ```bash
 npx wrangler deploy
