@@ -19,3 +19,14 @@ directory = "src/WorkersDotNet/dist/wwwroot"
 binding = "ASSETS"
 run_worker_first = true
 not_found_handling = "single-page-application"
+
+# Origins allowed to call this worker cross-origin, as a comma-separated list.
+# There is no wildcard: an origin must match exactly, and an empty list grants
+# no cross-origin access at all.
+#
+# During local development the Blazor frontend is served by `dotnet run`/Aspire
+# on the ports in src/BlazorWebApp/Properties/launchSettings.json while the
+# worker listens on http://localhost:8787, so the frontend origins must be
+# listed here.
+[vars]
+ALLOWED_ORIGINS = "http://localhost:5217,https://localhost:7000"

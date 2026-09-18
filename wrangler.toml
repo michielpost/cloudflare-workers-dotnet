@@ -12,3 +12,14 @@ not_found_handling = "single-page-application"
 
 [build]
 command = "sh cloudflarebuild.sh"
+
+# Origins allowed to call this worker cross-origin, as a comma-separated list.
+# There is no wildcard: an origin must match exactly, and an empty list grants
+# no cross-origin access at all.
+#
+# The deployed Blazor frontend is served by this same worker through the
+# [assets] binding above, so its own calls are same-origin and need no entry.
+# Add origins here only when the frontend is hosted somewhere else, e.g.
+#   ALLOWED_ORIGINS = "https://my-frontend.pages.dev,https://app.example.com"
+[vars]
+ALLOWED_ORIGINS = ""

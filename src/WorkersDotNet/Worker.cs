@@ -15,12 +15,13 @@ namespace WorkersDotNet
             // Browser CORS preflight for cross-origin calls from the frontend
             // (e.g. the Blazor app served by Aspire on a separate port).
             if (request.Method == "OPTIONS")
-                return Cors.Preflight(origin);
+                return Cors.Preflight(origin, environment);
 
             var response = await Router.HandleAsync(request, environment);
 
-            // Allow the originating frontend domain to read the response.
-            return Cors.Apply(response, origin);
+            // Allow the originating frontend domain (when it is on the
+            // ALLOWED_ORIGINS list) to read the response.
+            return Cors.Apply(response, origin, environment);
         }
     }
 }
