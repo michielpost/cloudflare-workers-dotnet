@@ -1,0 +1,156 @@
+@page "/kv"
+@inherits SamplePageBase
+
+<PageTitle>KV storage</PageTitle>
+
+<PageHeader Title="KV storage"
+            Subtitle="A key-value namespace with three fixed keys. You can write up to 64 characters into one of them and read the values back; locally the data lives in the wrangler KV store."
+            Tags="@(new[] { "env.KV", SampleConfig.KvNamespaceName, "64 characters", "3 fixed keys" })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="Write a value"
+                Description="Pick one of the three keys and write a value of at most 64 characters into it. The worker validates the length and the key name and returns the whole snapshot.">
+        <div class="tile-grid">
+            @foreach (var item in Items)
+            {
+                <button type="button" class="tile @(item.Key == selectedKey ? "tile-selected" : "")"
+                        @onclick="() => Select(item.Key)" disabled="@Busy">
+                    <div class="tile-head">
+                        <span>@item.Key</span>
+                        <span class="badge @(item.HasValue ? "badge-ok" : "badge-neutral")">
+                            @(item.HasValue ? "set" : "empty")
+                        </span>
+                    </div>
+                    <div class="tile-body @(item.HasValue ? "" : "tile-empty")">
+                        @(item.HasValue ? item.Value : "no value yet")
+                    </div>
+                    <div class="tile-meta">@(item.HasValue ? $"{item.Value.Length} characters" : "—")</div>
+                </button>
+            }
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="kv-value">New value for <code>@selectedKey</code></label>
+            <input id="kv-value" type="text" maxlength="@MaxLength" @bind="value" @bind:event="oninput" />
+            <div class="counter @(value.Length > MaxLength ? "counter-over" : "")">
+                @value.Length / @MaxLength characters
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="WriteAsync" disabled="@(Busy || !CanWrite)">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Write to @selectedKey
+            </button>
+            <button class="btn" @onclick="RefreshAsync" disabled="@Busy">Read all keys again</button>
+            <button class="btn btn-ghost" @onclick="ClearLog" disabled="@(Busy || Calls.Count == 0)">Clear call log</button>
+        </div>
+
+        @if (message is not null)
+        {
+            <Notice Kind="@(messageOk ? "ok" : "warn")" Message="@message" />
+        }
+
+        @if (!CanWrite && value.Length == 0)
+        {
+            <p class="muted">Waiting for a value. Empty values are rejected by the worker, so the write button stays disabled.</p>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Current values"
+                Description="Read straight from the KV namespace. The keys and the limit are the same everywhere, because the worker and this frontend share SampleConfig.">
+        <div class="kpi-row">
+            <div class="kpi">
+                <div class="kpi-label">namespace</div>
+                <div class="kpi-value">@(snapshot?.NamespaceName ?? SampleConfig.KvNamespaceName)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">max value length</div>
+                <div class="kpi-value">@MaxLength characters</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">keys with a value</div>
+                <div class="kpi-value">@Items.Count(i => i.HasValue) / @Items.Count</div>
+            </div>
+        </div>
+
+        <RawView Raw="@raw" Label="Raw GET /api/kv response"
+                 Caption="@(caption ?? "No call yet.")" />
+    </SampleCard>
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    const int MaxLength = SampleConfig.KvMaxValueLength;
+
+    static readonly string[] Keys = ["sample_key_1", "sample_key_2", "sample_key_3"];
+
+    string selectedKey = Keys[0];
+    string value = "";
+    string? message;
+    bool messageOk;
+    string? raw;
+    string? caption;
+
+    KvSnapshot? snapshot;
+
+    IReadOnlyList<KvItem> Items => snapshot?.Items ?? Keys.Select(k => new KvItem(k, "", false)).ToArray();
+
+    bool CanWrite => value.Length > 0 && value.Length <= MaxLength;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync(track: false);
+
+    async Task RefreshAsync() => await LoadAsync(track: true);
+
+    async Task LoadAsync(bool track) => await GuardAsync(async () =>
+    {
+        var result = await Api.GetAsync<KvSnapshot>("/api/kv");
+        snapshot = result.Value;
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+        if (track)
+            Tracked("Read all keys", "GET", "/api/kv", result);
+    });
+
+    async Task WriteAsync() => await GuardAsync(async () =>
+    {
+        var result = await Api.PostJsonAsync<KvWriteResult>(
+            "/api/kv",
+            new KvWriteRequest(selectedKey, value));
+
+        Tracked($"Write {selectedKey}", "POST", "/api/kv", result);
+
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+        if (result.HasValue)
+        {
+            snapshot = result.Value!.Snapshot;
+            messageOk = true;
+            message = result.Value.Message;
+        }
+        else
+        {
+            messageOk = false;
+            message = result.Error ?? $"{result.Status} {result.Reason}";
+        }
+    });
+
+    void Select(string key)
+    {
+        selectedKey = key;
+        message = null;
+    }
+}

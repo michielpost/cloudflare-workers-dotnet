@@ -73,9 +73,13 @@ namespace WorkersDotNet
 
         public static Response Apply(Response response, string? origin, Env environment)
         {
-            // "location" is not a CORS-safelisted response header, so it has to
-            // be exposed explicitly for the redirect endpoint to be readable.
-            var withExposed = response.WithHeader("access-control-expose-headers", "location");
+            // None of these are CORS-safelisted response headers, so they have to
+            // be exposed explicitly to be readable from JavaScript: "location" for
+            // the redirect endpoint and the sample headers that report where a
+            // response came from (cache hit/miss, the stored R2 object).
+            var withExposed = response.WithHeader(
+                "access-control-expose-headers",
+                "location, x-cache, x-cache-key, x-cache-note, etag, x-r2-bucket, x-r2-key");
 
             var allowed = AllowedOrigin(origin, environment);
             if (allowed is null)

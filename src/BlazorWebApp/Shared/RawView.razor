@@ -1,0 +1,52 @@
+@* Raw response viewer. Collapsed by default so the pretty view stays on top. *@
+
+<div class="raw-view">
+    <button type="button" class="raw-toggle" @onclick="() => open = !open">
+        <span class="chev @(open ? "chev-open" : "")">▸</span>
+        @Label
+    </button>
+
+    @if (open)
+    {
+        <pre class="code-block">@Pretty</pre>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string? Label { get; set; } = "Raw response";
+
+    /// <summary>Raw body returned by the worker.</summary>
+    [Parameter]
+    public string? Raw { get; set; }
+
+    /// <summary>Extra lines shown above the body, e.g. status and duration.</summary>
+    [Parameter]
+    public string? Caption { get; set; }
+
+    bool open;
+
+    string Pretty
+    {
+        get
+        {
+            var body = Raw is { Length: > 0 } ? TryIndent(Raw) : "(empty body)";
+            return Caption is { Length: > 0 } ? Caption + "\n" + new string('─', Math.Min(Caption.Length, 60)) + "\n" + body : body;
+        }
+    }
+
+    static string TryIndent(string raw)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(raw);
+            return System.Text.Json.JsonSerializer.Serialize(
+                document,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return raw;
+        }
+    }
+}

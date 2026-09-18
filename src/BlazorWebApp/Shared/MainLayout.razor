@@ -1,2 +1,53 @@
 @inherits LayoutComponentBase
-@Body
+@inject NavigationManager Navigation
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <NavMenu />
+        <div class="sidebar-foot">
+            <div class="sidebar-foot-title">Local dev</div>
+            <div class="sidebar-foot-body">
+                Aspire starts this frontend plus Wrangler on port 8787. KV, R2 and queues
+                run against local storage under <code>.wrangler/state</code>.
+            </div>
+        </div>
+    </aside>
+
+    <main class="content">
+        <header class="topbar">
+            <div class="topbar-crumbs">
+                <span class="crumb-root">Cloudflare Workers .NET</span>
+                <span class="crumb-sep">/</span>
+                <span class="crumb-page">@PageName</span>
+            </div>
+            <div class="topbar-right">
+                <WorkerStatus />
+            </div>
+        </header>
+
+        <article class="page">
+            <ErrorBoundary>
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent>
+                    <Notice Kind="err" Message="This page hit an unhandled error. Reload the page to continue." />
+                </ErrorContent>
+            </ErrorBoundary>
+        </article>
+    </main>
+</div>
+
+@code {
+    string PageName => Navigation.Uri.Split('/').LastOrDefault() switch
+    {
+        "" or null => "overview",
+        "basics" => "request basics",
+        "cache" => "cache api",
+        "kv" => "kv storage",
+        "r2" => "r2 bucket",
+        "queue" => "queues",
+        "scheduled" => "scheduled task",
+        var other => other
+    };
+}

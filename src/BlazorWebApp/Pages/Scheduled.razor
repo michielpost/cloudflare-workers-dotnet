@@ -1,0 +1,210 @@
+@page "/scheduled"
+@inherits SamplePageBase
+
+<PageTitle>Scheduled task</PageTitle>
+
+<PageHeader Title="Scheduled task"
+            Subtitle="A cron trigger that runs every hour, entirely without a request. Each run writes its result to a KV key, and this page reads the latest value back out of that key."
+            Tags="@(new[] { "[Scheduled]", "triggers.crons", SampleConfig.ScheduledCron, SampleConfig.ScheduledResultKey })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="The trigger" Description="Registered in wrangler.toml, delivered by Cloudflare, handled by WorkerEvents.OnSchedule.">
+        <div class="pipeline">
+            <div class="pipeline-node">
+                <div class="pipeline-node-title">Cron trigger</div>
+                <div class="pipeline-node-sub">@SampleConfig.ScheduledCron — every hour</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node">
+                <div class="pipeline-node-title">[Scheduled] handler</div>
+                <div class="pipeline-node-sub">OnSchedule(scheduled, env, ctx)</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(status?.Latest is not null ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">KV write</div>
+                <div class="pipeline-node-sub">context.WaitUntil(kv.put(…))</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(status?.Latest is not null ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">This page</div>
+                <div class="pipeline-node-sub">GET /api/scheduled</div>
+            </div>
+        </div>
+
+        <p class="muted">
+            <code>@SampleConfig.ScheduledCron</code> is a standard cron expression: at minute 0 of every hour.
+            The KV write is handed to <code>context.WaitUntil</code> because the handler returns immediately.
+        </p>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="RunNowAsync" disabled="@Busy">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Run the task now
+            </button>
+            <button class="btn" @onclick="RefreshAsync" disabled="@Busy">Refresh</button>
+            <a class="btn btn-ghost" href="@ScheduledTestUrl" target="_blank" rel="noopener noreferrer">
+                Fire the real cron trigger
+            </a>
+        </div>
+
+        @if (message is not null)
+        {
+            <Notice Kind="@(messageOk ? "ok" : "warn")" Message="@message" />
+        }
+
+        <p class="muted">
+            “Run the task now” calls the same code the cron calls and records the run as manual. The last button
+            asks <code>wrangler dev --test-scheduled</code> to fire the cron as Cloudflare would, and it is opened
+            in a new tab because that endpoint belongs to wrangler rather than to the worker.
+        </p>
+    </SampleCard>
+
+    <SampleCard Title="Latest result in KV">
+        @if (status?.Latest is null)
+        {
+            <p class="muted">
+                Nothing in <code>@SampleConfig.ScheduledResultKey</code> yet. Wait for the next full hour, or run the
+                task now.
+            </p>
+        }
+        else
+        {
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">KV key</div>
+                    <div class="kpi-value">@(status.ResultKey.Length > 0 ? status.ResultKey : SampleConfig.ScheduledResultKey)</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">run number</div>
+                    <div class="kpi-value kpi-value-lg">#@status.Latest.RunNumber</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">scheduled for</div>
+                    <div class="kpi-value">@Fmt.Local(status.Latest.ScheduledForUtc, "yyyy-MM-dd HH:mm:ss")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">ran at</div>
+                    <div class="kpi-value">@Fmt.Local(status.Latest.RanAtUtc, "yyyy-MM-dd HH:mm:ss")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">age</div>
+                    <div class="kpi-value">@Fmt.Ago(status.Latest.RanAtUtc)</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">trigger</div>
+                    <div class="kpi-value">
+                        <span class="badge @(status.Latest.Manual ? "badge-info" : "badge-ok")">
+                            @(status.Latest.Manual ? "manual" : "cron")
+                        </span>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <RawView Raw="@raw" Label="Raw GET /api/scheduled response" Caption="@caption" />
+    </SampleCard>
+
+    <SampleCard Title="Run history" Description="Newest first. Stored next to the latest result so the sample can be read without waiting for two hours.">
+        @if (status is null || status.Items.Count == 0)
+        {
+            <p class="muted">No runs yet.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th class="num">Run</th>
+                            <th>Trigger</th>
+                            <th>Cron</th>
+                            <th>Scheduled for</th>
+                            <th>Ran at</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in status.Items)
+                        {
+                            <tr>
+                                <td class="num mono">#@run.RunNumber</td>
+                                <td>
+                                    <span class="badge @(run.Manual ? "badge-info" : "badge-ok")">
+                                        @(run.Manual ? "manual" : "cron")
+                                    </span>
+                                </td>
+                                <td class="mono">@run.Cron</td>
+                                <td class="mono">@Fmt.Local(run.ScheduledForUtc, "yyyy-MM-dd HH:mm:ss")</td>
+                                <td class="mono">@Fmt.Local(run.RanAtUtc, "yyyy-MM-dd HH:mm:ss")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    ScheduledStatus? status;
+    string? raw;
+    string? caption;
+    string? message;
+    bool messageOk;
+
+    /// <summary>
+    /// wrangler exposes this endpoint while running with --test-scheduled; it fires
+    /// the scheduled handler exactly like the cron would.
+    /// </summary>
+    string ScheduledTestUrl => Api.Url("/__scheduled?cron=" + Uri.EscapeDataString(SampleConfig.ScheduledCron));
+
+    protected override async Task OnInitializedAsync() => await LoadAsync(track: false);
+
+    async Task RefreshAsync() => await LoadAsync(track: true);
+
+    async Task LoadAsync(bool track) => await GuardAsync(async () =>
+    {
+        var result = await Api.GetAsync<ScheduledStatus>("/api/scheduled");
+        status = result.Value;
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+        if (track)
+            Tracked("Read scheduled result", "GET", "/api/scheduled", result);
+    });
+
+    async Task RunNowAsync() => await GuardAsync(async () =>
+    {
+        var result = await Api.PostAsync<ScheduledStatus>("/api/scheduled");
+        Tracked("Run the task now", "POST", "/api/scheduled", result);
+
+        if (result.HasValue)
+        {
+            status = result.Value;
+            raw = result.Raw;
+            caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+            var latest = result.Value!.Latest;
+            messageOk = true;
+            message = latest is null
+                ? "The worker ran the task."
+                : $"Run #{latest.RunNumber} finished at {Fmt.Local(latest.RanAtUtc, "HH:mm:ss")} and wrote {SampleConfig.ScheduledResultKey}.";
+        }
+        else
+        {
+            messageOk = false;
+            message = result.Error ?? $"{result.Status} {result.Reason}";
+        }
+    });
+}

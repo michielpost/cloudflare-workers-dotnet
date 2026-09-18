@@ -1,0 +1,173 @@
+@page "/cache"
+@inherits SamplePageBase
+
+<PageTitle>Cache API</PageTitle>
+
+<PageHeader Title="Cache API"
+            Subtitle="caches.default stores the worker's own response. The first request generates a payload, the next ones are served from the cache, and purging makes the next request a miss again."
+            Tags="@(new[] { "caches.default", "cache.MatchAsync", "cache.PutAsync", "cache.DeleteAsync" })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="Cache key"
+                Description="The full request URL is the cache key, so two different keys are cached independently. Change the key and the sample starts with a miss again.">
+        <div class="field">
+            <label class="field-label" for="cache-key">?key=</label>
+            <input id="cache-key" type="text" @bind="key" @bind:event="oninput" />
+            <div class="field-hint">
+                Press “Request” twice to watch <code>x-cache</code> flip from <code>miss</code> to <code>hit</code>.
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="RequestAsync" disabled="@Busy">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Request (GET)
+            </button>
+            <button class="btn btn-danger" @onclick="PurgeAsync" disabled="@Busy">Purge entry (POST)</button>
+        </div>
+    </SampleCard>
+
+    <SampleCard Title="Result">
+        @if (view is null)
+        {
+            <p class="muted">No call yet. Send a GET request to generate and store the entry.</p>
+        }
+        else
+        {
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">x-cache</div>
+                    <div class="kpi-value kpi-value-lg">
+                        <span class="badge @BadgeClass(view.Highlight)">@view.Highlight</span>
+                    </div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">entry id</div>
+                    <div class="kpi-value mono">@(view.Payload?.EntryId ?? "—")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">generated at</div>
+                    <div class="kpi-value">@Fmt.Local(view.Payload?.GeneratedAtUtc, "yyyy-MM-dd HH:mm:ss")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">age</div>
+                    <div class="kpi-value">@Fmt.Ago(view.Payload?.GeneratedAtUtc)</div>
+                </div>
+            </div>
+
+            <p class="muted">
+                The entry id and the generated date come from the cached payload: on a hit they stay the same,
+                which is what proves the response was served out of the cache instead of being rebuilt.
+            </p>
+
+            @if (view.Note is not null)
+            {
+                <Notice Kind="info" Message="@view.Note" />
+            }
+
+            <p class="muted mono" style="word-break:break-all">cache key: @view.CacheKey</p>
+
+            <RawView Raw="@view.Raw" Caption="@view.Caption" />
+        }
+    </SampleCard>
+
+    <SampleCard Title="What the worker does" Compact>
+        <div class="pipeline">
+            <div class="pipeline-node @(view is null ? "" : "pipeline-node-active")">
+                <div class="pipeline-node-title">1. Match</div>
+                <div class="pipeline-node-sub">cache.MatchAsync(url)</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(view?.Highlight == "hit" ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">2. Hit</div>
+                <div class="pipeline-node-sub">stored response replayed</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(view?.Highlight == "miss" ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">3. Miss, build and store</div>
+                <div class="pipeline-node-sub">context.WaitUntil(cache.PutAsync(…))</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(view?.Highlight == "purged" ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">4. Purge</div>
+                <div class="pipeline-node-sub">cache.DeleteAsync(url)</div>
+            </div>
+        </div>
+
+        <p class="muted">
+            The stored copy carries <code>cache-control: max-age=300</code>; without it the Cache API quietly
+            refuses to keep the response. The copy sent to this browser carries <code>cache-control: no-store</code>,
+            so every click really reaches the worker and the hit/miss flip stays visible.
+        </p>
+    </SampleCard>
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    const string HighlightHeader = "x-cache";
+
+    /// <summary>Everything the result card shows, rebuilt by each call.</summary>
+    sealed record CacheView(
+        string Highlight,
+        CachePayload? Payload,
+        string CacheKey,
+        string? Note,
+        string Caption,
+        string Raw);
+
+    string key = "demo";
+
+    CacheView? view;
+
+    string Path => "/api/cache?key=" + Uri.EscapeDataString(key);
+
+    async Task RequestAsync() => await GuardAsync(async () =>
+    {
+        var result = await Api.GetAsync<CachePayload>(Path, HighlightHeader);
+        Tracked($"GET ?key={key}", "GET", "/api/cache", result);
+
+        view = new CacheView(
+            result.Highlight ?? "—",
+            result.Value,
+            result.Value?.CacheKey ?? result.Header("x-cache-key") ?? Path,
+            result.Header("x-cache-note"),
+            Caption(result, "GET"),
+            result.Raw);
+    });
+
+    async Task PurgeAsync() => await GuardAsync(async () =>
+    {
+        var result = await Api.PostAsync<CachePurgeResult>(Path, HighlightHeader);
+        Tracked($"Purge ?key={key}", "POST", "/api/cache", result);
+
+        view = new CacheView(
+            result.Highlight ?? "—",
+            null,
+            result.Value?.CacheKey ?? Path,
+            result.Value?.Message,
+            Caption(result, "POST"),
+            result.Raw);
+    });
+
+    static string Caption<T>(ApiResult<T> result, string method)
+        => $"{method} /api/cache  →  {result.Status} {result.Reason} in {result.Milliseconds:0.0} ms — x-cache: {result.Highlight ?? "n/a"}";
+
+    static string BadgeClass(string? value) => value?.ToLowerInvariant() switch
+    {
+        "hit" => "badge-ok",
+        "miss" => "badge-info",
+        "purged" => "badge-warn",
+        _ => "badge-neutral"
+    };
+}

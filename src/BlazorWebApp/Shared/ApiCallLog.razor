@@ -1,0 +1,66 @@
+@* Table of the calls a page made. Shows status, duration and the highlighted
+   response header (x-cache, for example) so the worker's behaviour is visible. *@
+
+@if (Entries.Count == 0)
+{
+    <p class="muted">No calls yet.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Call</th>
+                    <th>Status</th>
+                    <th>Result</th>
+                    <th class="num">Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var entry in Entries)
+                {
+                    <tr class="@(entry.Ok ? "" : "row-bad")">
+                        <td class="mono muted">@entry.At.ToString("HH:mm:ss")</td>
+                        <td>
+                            <span class="method">@entry.Method</span>
+                            <span class="mono">@entry.Label</span>
+                        </td>
+                        <td>
+                            <span class="status @StatusClass(entry.Status)">@entry.Status</span>
+                            <span class="muted">@entry.Reason</span>
+                        </td>
+                        <td>
+                            @if (entry.Highlight is not null)
+                            {
+                                <span class="badge @HighlightClass(entry.Highlight)">@entry.Highlight</span>
+                            }
+                        </td>
+                        <td class="num mono">@entry.Milliseconds.ToString("0.0") ms</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ApiCallEntry> Entries { get; set; } = [];
+
+    static string StatusClass(int status) => status switch
+    {
+        >= 200 and < 300 => "status-ok",
+        >= 400 and < 500 => "status-warn",
+        _ => "status-err"
+    };
+
+    static string HighlightClass(string value) => value.ToLowerInvariant() switch
+    {
+        "hit" => "badge-ok",
+        "miss" => "badge-info",
+        "purged" => "badge-warn",
+        _ => "badge-neutral"
+    };
+}

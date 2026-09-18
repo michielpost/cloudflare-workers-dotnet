@@ -1,0 +1,36 @@
+@* Heading block every sample page starts with: title, one-line explanation and
+   the bindings the sample touches. *@
+
+<div class="page-header">
+    <div class="page-header-text">
+        <h1>@Title</h1>
+        @if (!string.IsNullOrWhiteSpace(Subtitle))
+        {
+            <p class="page-subtitle">@Subtitle</p>
+        }
+    </div>
+
+    @if (Tags is { Length: > 0 })
+    {
+        <div class="tag-row">
+            @foreach (var tag in Tags)
+            {
+                <span class="tag">@tag</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Heading of the page.</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = "";
+
+    /// <summary>One-line explanation shown under the heading.</summary>
+    [Parameter]
+    public string? Subtitle { get; set; }
+
+    /// <summary>Small pills shown on the right, e.g. the bindings the sample uses.</summary>
+    [Parameter]
+    public string[]? Tags { get; set; }
+}

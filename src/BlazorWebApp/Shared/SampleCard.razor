@@ -1,0 +1,52 @@
+@* Rounded panel used for every block on a sample page. *@
+
+<section class="card @(Compact ? "card-compact" : "")">
+    @if (!string.IsNullOrWhiteSpace(Title))
+    {
+        <header class="card-head">
+            <div>
+                <h2>@Title</h2>
+                @if (!string.IsNullOrWhiteSpace(Description))
+                {
+                    <p class="card-desc">@Description</p>
+                }
+            </div>
+            <div class="card-actions">
+                @Actions
+            </div>
+        </header>
+    }
+
+    <div class="card-body @BodyClass">
+        @ChildContent
+    </div>
+
+    @if (Footer is not null)
+    {
+        <footer class="card-foot">@Footer</footer>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    /// <summary>Rendered at the right of the card header.</summary>
+    [Parameter]
+    public RenderFragment? Actions { get; set; }
+
+    [Parameter]
+    public string? BodyClass { get; set; }
+
+    [Parameter]
+    public bool Compact { get; set; }
+
+    [Parameter]
+    public RenderFragment? Footer { get; set; }
+
+    [Parameter, EditorRequired]
+    public RenderFragment ChildContent { get; set; } = default!;
+}

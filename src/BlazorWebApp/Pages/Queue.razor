@@ -1,0 +1,266 @@
+@page "/queue"
+@inherits SamplePageBase
+@implements IDisposable
+
+<PageTitle>Queues</PageTitle>
+
+<PageHeader Title="Queues"
+            Subtitle="A producer puts a short message on a Cloudflare queue together with the date it was queued. A consumer picks the message up in a separate invocation and writes the text plus the processed date to KV."
+            Tags="@(new[] { "env.QUEUE", SampleConfig.QueueName, "16 characters", SampleConfig.QueueResultKey })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="How the message travels" Description="Two separate worker invocations plus a KV key, which is the only thing they share.">
+        <div class="pipeline">
+            <div class="pipeline-node">
+                <div class="pipeline-node-title">This page</div>
+                <div class="pipeline-node-sub">POST /api/queue</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(sending ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">Producer</div>
+                <div class="pipeline-node-sub">queue.send(text, queuedAt)</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(waiting ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">@SampleConfig.QueueName</div>
+                <div class="pipeline-node-sub">@(waiting ? "waiting for the consumer…" : "cloudflare queue")</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(status?.Latest is not null ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">Consumer</div>
+                <div class="pipeline-node-sub">[Queue] ConsumeAsync</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(status?.Latest is not null ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">KV</div>
+                <div class="pipeline-node-sub">@SampleConfig.QueueResultKey</div>
+            </div>
+        </div>
+
+        @if (waiting)
+        {
+            <Notice Kind="info">
+                <span class="pulse">Waiting for the consumer to process the message…</span>
+            </Notice>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Put a message on the queue"
+                Description="Up to 16 characters. The producer adds the UTC date and time it was queued, and the queue hands the message to the consumer.">
+        <div class="field">
+            <label class="field-label" for="queue-text">Message text</label>
+            <input id="queue-text" type="text" maxlength="@MaxLength" @bind="text" @bind:event="oninput"
+                   @onkeydown="OnKeyDown" placeholder="hello queue" />
+            <div class="counter @(text.Length > MaxLength ? "counter-over" : "")">
+                @text.Length / @MaxLength characters
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="SendAsync" disabled="@(Busy || !CanSend)">
+                @if (Busy || sending)
+                {
+                    <span class="spinner"></span>
+                }
+                Send to @SampleConfig.QueueName
+            </button>
+            <button class="btn" @onclick="RefreshAsync" disabled="@Busy">Refresh status</button>
+        </div>
+
+        @if (sendMessage is not null)
+        {
+            <Notice Kind="@(sendOk ? "ok" : "warn")" Message="@sendMessage" />
+        }
+    </SampleCard>
+
+    <SampleCard Title="Latest processed message">
+        @if (status?.Latest is null)
+        {
+            <p class="muted">Nothing has been processed yet. Send a message to fill <code>@SampleConfig.QueueResultKey</code>.</p>
+        }
+        else
+        {
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">text</div>
+                    <div class="kpi-value kpi-value-lg">@status.Latest.Text</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">queued at</div>
+                    <div class="kpi-value">@Fmt.Local(status.Latest.QueuedAtUtc, "yyyy-MM-dd HH:mm:ss.fff")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">processed at</div>
+                    <div class="kpi-value">@Fmt.Local(status.Latest.ProcessedAtUtc, "yyyy-MM-dd HH:mm:ss.fff")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">time on the queue</div>
+                    <div class="kpi-value">@Fmt.Between(status.Latest.QueuedAtUtc, status.Latest.ProcessedAtUtc)</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">message id</div>
+                    <div class="kpi-value">@status.Latest.MessageId</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">KV key</div>
+                    <div class="kpi-value">@status.ResultKey</div>
+                </div>
+            </div>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Recent messages" Description="The consumer keeps the last entries in KV, newest first.">
+        @if (status is null || status.Items.Count == 0)
+        {
+            <p class="muted">No history yet.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Text</th>
+                            <th>Queued at</th>
+                            <th>Processed at</th>
+                            <th class="num">Time on queue</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in status.Items)
+                        {
+                            <tr>
+                                <td class="mono">@item.Text</td>
+                                <td class="mono">@Fmt.Local(item.QueuedAtUtc, "HH:mm:ss.fff")</td>
+                                <td class="mono">@Fmt.Local(item.ProcessedAtUtc, "HH:mm:ss.fff")</td>
+                                <td class="num mono">@Fmt.Between(item.QueuedAtUtc, item.ProcessedAtUtc)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <RawView Raw="@raw" Label="Raw GET /api/queue response" Caption="@caption" />
+    </SampleCard>
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    const int MaxLength = SampleConfig.QueueMaxTextLength;
+    const int PollIntervalMs = 500;
+    const int MaxPolls = 20;
+
+    string text = "";
+    QueueStatus? status;
+    string? sendMessage;
+    bool sendOk;
+    string? raw;
+    string? caption;
+
+    /// <summary>QueuedAtUtc of the message we just sent, so polling can wait for it.</summary>
+    string? pendingQueuedAt;
+
+    bool sending;
+    bool waiting;
+
+    System.Threading.Timer? pollTimer;
+    int polls;
+
+    bool CanSend => text.Trim().Length > 0 && text.Trim().Length <= MaxLength;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync(track: false);
+
+    void OnKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && CanSend)
+            _ = SendAsync();
+    }
+
+    async Task RefreshAsync() => await LoadAsync(track: true);
+
+    async Task LoadAsync(bool track) => await GuardAsync(async () =>
+    {
+        var result = await Api.GetAsync<QueueStatus>("/api/queue");
+        status = result.Value;
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+        if (track)
+            Tracked("Read queue result", "GET", "/api/queue", result);
+    });
+
+    async Task SendAsync() => await GuardAsync(async () =>
+    {
+        sending = true;
+        sendMessage = null;
+
+        var result = await Api.PostJsonAsync<QueueSendResult>("/api/queue", new QueueMessageInput(text.Trim()));
+        Tracked($"Send \"{text.Trim()}\"", "POST", "/api/queue", result);
+
+        sendOk = result.HasValue;
+        sendMessage = result.HasValue
+            ? $"{result.Value!.Message} Queued at {Fmt.Local(result.Value.QueuedAtUtc, "HH:mm:ss.fff")}."
+            : result.Error ?? $"{result.Status} {result.Reason}";
+
+        sending = false;
+
+        if (result.HasValue)
+        {
+            pendingQueuedAt = result.Value!.QueuedAtUtc;
+            text = "";
+            StartPolling();
+        }
+    });
+
+    /// <summary>
+    /// The consumer runs in its own worker invocation a moment after the send, so
+    /// the page polls KV through /api/queue until the message shows up.
+    /// </summary>
+    void StartPolling()
+    {
+        waiting = true;
+        polls = 0;
+
+        pollTimer?.Dispose();
+        pollTimer = new System.Threading.Timer(async _ => await PollAsync(), null, PollIntervalMs, PollIntervalMs);
+    }
+
+    async Task PollAsync()
+    {
+        polls++;
+
+        var result = await Api.GetAsync<QueueStatus>("/api/queue");
+
+        await InvokeAsync(async () =>
+        {
+            status = result.Value ?? status;
+            raw = result.Raw;
+            caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+            // Stop only once KV holds the message we just sent, not merely once
+            // some older message is there.
+            var consumed = status?.Latest is not null
+                           && string.Equals(status.Latest.QueuedAtUtc, pendingQueuedAt, StringComparison.Ordinal);
+
+            if (consumed || polls >= MaxPolls)
+            {
+                waiting = false;
+                pollTimer?.Dispose();
+                pollTimer = null;
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose() => pollTimer?.Dispose();
+}

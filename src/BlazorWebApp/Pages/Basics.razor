@@ -1,0 +1,165 @@
+@page "/basics"
+@inherits SamplePageBase
+
+<PageTitle>Request basics</PageTitle>
+
+<PageHeader Title="Request basics"
+            Subtitle="The four request/response shapes the worker speaks: a serialized model, an outbound fetch, a redirect and a validated POST."
+            Tags="@(new[] { "Response.Json", "fetch", "302", "Results.Error" })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="1. JSON response"
+                Description="The worker answers with the shared ApiResponse model from src/Shared, serialized to JSON.">
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="CallJsonAsync" disabled="@Busy">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Call GET /api/json
+            </button>
+        </div>
+
+        @if (json is not null)
+        {
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">ok</div>
+                    <div class="kpi-value">@json.Value?.Ok</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">message</div>
+                    <div class="kpi-value">@json.Value?.Message</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">path</div>
+                    <div class="kpi-value">@json.Value?.Path</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">timestamp</div>
+                    <div class="kpi-value">@Fmt.Local(json.Value?.Timestamp.ToString("O"))</div>
+                </div>
+            </div>
+
+            <RawView Raw="@json.Raw" Caption="@Caption(json, "GET", "/api/json")" />
+        }
+    </SampleCard>
+
+    <SampleCard Title="2. Proxy fetch"
+                Description="The worker fetches a remote URL itself and tags the response with x-proxied-by: Workers.">
+        <div class="field">
+            <label class="field-label" for="proxy-url">URL to fetch from the worker</label>
+            <input id="proxy-url" type="text" @bind="proxyUrl" @bind:event="oninput" />
+            <div class="field-hint">The request goes out from Cloudflare's network, not from this browser.</div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="CallProxyAsync" disabled="@Busy">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Proxy it
+            </button>
+        </div>
+
+        @if (proxy is not null)
+        {
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">status</div>
+                    <div class="kpi-value">@proxy.Status @proxy.Reason</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">x-proxied-by</div>
+                    <div class="kpi-value">@(proxy.Header("x-proxied-by") ?? "—")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">content-type</div>
+                    <div class="kpi-value">@(proxy.Header("content-type") ?? "—")</div>
+                </div>
+            </div>
+
+            <RawView Raw="@proxy.Raw" Caption="@Caption(proxy, "GET", "/api/proxy")" />
+        }
+    </SampleCard>
+
+    <SampleCard Title="3. Redirect"
+                Description="A top-level navigation gets a real 302. A cross-origin fetch cannot follow it without CORS headers, so for those the worker returns the target in a location header instead.">
+        <div class="field">
+            <label class="field-label" for="redirect-url">Redirect target</label>
+            <input id="redirect-url" type="text" @bind="redirectUrl" @bind:event="oninput" />
+        </div>
+
+        <div class="btn-row">
+            <a class="btn btn-primary" href="@RedirectUrl" target="_blank" rel="noopener noreferrer">Open the redirect URL</a>
+        </div>
+
+        <p class="muted mono">@RedirectUrl</p>
+    </SampleCard>
+
+    <SampleCard Title="4. Request policy"
+                Description="The worker accepts a bounded JSON reading and validates it. Send one that passes and one that breaks every rule (device id, range, tag count).">
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="CallPolicyValidAsync" disabled="@Busy">Send a valid reading</button>
+            <button class="btn btn-danger" @onclick="CallPolicyInvalidAsync" disabled="@Busy">Send an invalid reading</button>
+        </div>
+
+        @if (policy is not null)
+        {
+            <Notice Kind="@(policy.Ok ? "ok" : "warn")"
+                    Message="@(policy.Ok ? $"Accepted: {policy.Status} {policy.Reason}" : $"{policy.Status} {policy.Reason} — {policy.Error ?? "rejected"}")" />
+
+            <RawView Raw="@policy.Raw" Caption="@Caption(policy, "POST", "/api/policy")" />
+        }
+    </SampleCard>
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    ApiResult<ApiResponse>? json;
+    ApiResult<ApiResponse>? proxy;
+    ApiResult<ApiResponse>? policy;
+
+    string proxyUrl = "https://example.com";
+    string redirectUrl = "https://example.com";
+
+    // Navigating to this URL (instead of fetching it) lets the browser follow the
+    // 302, which is what the sample wants to demonstrate.
+    string RedirectUrl => Api.Url("/api/redirect?to=" + Uri.EscapeDataString(redirectUrl));
+
+    async Task CallJsonAsync() => await GuardAsync(async () =>
+    {
+        json = await Api.GetAsync<ApiResponse>("/api/json");
+        Tracked("GET /api/json", "GET", "/api/json", json);
+    });
+
+    async Task CallProxyAsync() => await GuardAsync(async () =>
+    {
+        proxy = await Api.GetAsync<ApiResponse>("/api/proxy?url=" + Uri.EscapeDataString(proxyUrl));
+        Tracked($"Proxy {proxyUrl}", "GET", "/api/proxy", proxy);
+    });
+
+    async Task CallPolicyValidAsync()
+        => await CallPolicyAsync(new ReadingInput("sensor-01", 42.5, new[] { "temp", "indoor" }), "Valid reading");
+
+    async Task CallPolicyInvalidAsync()
+        => await CallPolicyAsync(new ReadingInput("!!bad!!", 99999, new[] { "ok", "too", "many", "tags" }), "Invalid reading");
+
+    async Task CallPolicyAsync(ReadingInput input, string label) => await GuardAsync(async () =>
+    {
+        policy = await Api.PostJsonAsync<ApiResponse>("/api/policy", input);
+        Tracked(label, "POST", "/api/policy", policy);
+    });
+
+    string Caption(ApiResult<ApiResponse> result, string method, string path)
+        => $"{method} {path}  →  {result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+}

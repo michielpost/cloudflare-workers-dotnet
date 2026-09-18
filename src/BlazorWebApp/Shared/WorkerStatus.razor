@@ -1,0 +1,44 @@
+@implements IDisposable
+@inject WorkerApi Api
+@using BlazorWebApp.Services
+
+@* Small chip in the top bar that shows whether the worker answers. *@
+
+<div class="worker-status @stateClass" title="@Api.DisplayBaseUrl">
+    <span class="dot"></span>
+    <span class="worker-status-text">@text</span>
+</div>
+
+@code {
+    System.Threading.Timer? timer;
+    string stateClass = "worker-status-unknown";
+    string text = "checking worker…";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckAsync();
+
+        // The worker may be started after this page (Aspire starts both), so keep
+        // re-checking until it answers and then slow down to a health ping.
+        timer = new System.Threading.Timer(async _ => await CheckAsync(), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(15));
+    }
+
+    async Task CheckAsync()
+    {
+        var result = await Api.GetAsync<ApiResponse>("/api/json");
+
+        var next = result.HasValue
+            ? ("worker-status-ok", "worker online")
+            : result.TransportError is not null
+                ? ("worker-status-err", "worker offline")
+                : ("worker-status-warn", $"worker answered {result.Status}");
+
+        if (next.Item1 != stateClass || next.Item2 != text)
+        {
+            (stateClass, text) = next;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public void Dispose() => timer?.Dispose();
+}

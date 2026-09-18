@@ -1,0 +1,240 @@
+@page "/r2"
+@inherits SamplePageBase
+
+<PageTitle>R2 bucket</PageTitle>
+
+<PageHeader Title="R2 bucket"
+            Subtitle="An R2 bucket holding a single object. Uploads are capped at 1 KB and always land on the same key, so a new upload overwrites the previous file."
+            Tags="@(new[] { "env.R2", SampleConfig.R2BucketName, SampleConfig.R2ObjectKey, "1 KB" })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="Upload a file"
+                Description="Pick a file of at most 1 KB. The browser checks the size before sending, and the worker checks it again once the object is stored.">
+        <div class="field">
+            <label class="field-label" for="r2-file">File to store as @SampleConfig.R2ObjectKey</label>
+            <InputFile id="r2-file" OnChange="OnFileSelected" />
+            <div class="field-hint">
+                The name of the file you pick does not matter: everything is stored under
+                <code>@SampleConfig.R2ObjectKey</code>, so a new upload overwrites the old one.
+            </div>
+        </div>
+
+        @if (selected is not null)
+        {
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">selected file</div>
+                    <div class="kpi-value">@selected.Name</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">size</div>
+                    <div class="kpi-value">@Fmt.Bytes(selected.Size) / @Fmt.Bytes(SampleConfig.R2MaxBytes)</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">content type</div>
+                    <div class="kpi-value">@selected.ContentType</div>
+                </div>
+            </div>
+
+            @if (TooBig)
+            {
+                <Notice Kind="warn" Message="@($"That file is {Fmt.Bytes(selected.Size)}, the limit is {Fmt.Bytes(SampleConfig.R2MaxBytes)}. Pick a smaller one.")" />
+            }
+        }
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="UploadAsync" disabled="@(Busy || selected is null || TooBig)">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Upload to @SampleConfig.R2BucketName
+            </button>
+            <button class="btn" @onclick="RefreshAsync" disabled="@Busy">Refresh metadata</button>
+            <button class="btn btn-danger" @onclick="DeleteAsync" disabled="@Busy">Delete @SampleConfig.R2ObjectKey</button>
+        </div>
+
+        @if (message is not null)
+        {
+            <Notice Kind="@(messageOk ? "ok" : "warn")" Message="@message" />
+        }
+    </SampleCard>
+
+    <SampleCard Title="Stored object">
+        @if (file is null)
+        {
+            <p class="muted">No metadata yet.</p>
+        }
+        else if (!file.Exists)
+        {
+            <Notice Kind="info" Message="@($"{file.Key} does not exist in {file.Bucket} yet. Upload a file to create it.")" />
+        }
+        else
+        {
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">bucket</div>
+                    <div class="kpi-value">@file.Bucket</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">key</div>
+                    <div class="kpi-value">@file.Key</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">size</div>
+                    <div class="kpi-value">@Fmt.Bytes(file.Size) / @Fmt.Bytes(file.MaxBytes)</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">uploaded</div>
+                    <div class="kpi-value">@Fmt.Local(file.UploadedAtUtc, "yyyy-MM-dd HH:mm:ss")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">content type</div>
+                    <div class="kpi-value">@(file.ContentType.Length > 0 ? file.ContentType : "—")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">etag</div>
+                    <div class="kpi-value">@(file.Etag.Length > 0 ? file.Etag : "—")</div>
+                </div>
+            </div>
+
+            <div class="btn-row">
+                <a class="btn" href="@Api.Url("/api/r2/download")" download="@SampleConfig.R2ObjectKey">
+                    Download in the browser
+                </a>
+                <button class="btn" @onclick="DownloadAsync" disabled="@Busy">Download via fetch and inspect</button>
+            </div>
+        }
+    </SampleCard>
+
+    @if (download is not null)
+    {
+        <SampleCard Title="Downloaded bytes"
+                    Description="The worker streams the object straight out of R2 together with its metadata headers.">
+            <div class="kpi-row">
+                <div class="kpi">
+                    <div class="kpi-label">status</div>
+                    <div class="kpi-value">@download.Result.Status @download.Result.Reason</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">bytes</div>
+                    <div class="kpi-value">@Fmt.Bytes(download.Bytes.Length)</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">content-type</div>
+                    <div class="kpi-value">@(download.ContentType.Length > 0 ? download.ContentType : "—")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">content-disposition</div>
+                    <div class="kpi-value">@(download.Result.Header("content-disposition") ?? "—")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">etag</div>
+                    <div class="kpi-value">@(download.Result.Header("etag") ?? "—")</div>
+                </div>
+                <div class="kpi">
+                    <div class="kpi-label">round trip</div>
+                    <div class="kpi-value">@download.Result.Milliseconds.ToString("0.0") ms</div>
+                </div>
+            </div>
+
+            @if (download.Text.Length > 0)
+            {
+                <pre class="code-block">@download.Text</pre>
+            }
+            else
+            {
+                <p class="muted">The object is binary, so no text preview is shown.</p>
+            }
+        </SampleCard>
+    }
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    IBrowserFile? selected;
+
+    R2FileInfo? file;
+    DownloadResult<R2FileInfo>? download;
+    string? message;
+    bool messageOk;
+
+    bool TooBig => selected is not null && selected.Size > SampleConfig.R2MaxBytes;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync(track: false);
+
+    void OnFileSelected(InputFileChangeEventArgs args)
+    {
+        selected = args.File;
+        message = null;
+    }
+
+    async Task RefreshAsync() => await LoadAsync(track: true);
+
+    async Task LoadAsync(bool track) => await GuardAsync(async () =>
+    {
+        var result = await Api.GetAsync<R2FileInfo>("/api/r2");
+        file = result.Value;
+
+        if (track)
+            Tracked("Read metadata", "GET", "/api/r2", result);
+    });
+
+    async Task UploadAsync() => await GuardAsync(async () =>
+    {
+        if (selected is null)
+            return;
+
+        byte[] bytes;
+        using (var stream = selected.OpenReadStream(SampleConfig.R2MaxBytes))
+        using (var buffer = new MemoryStream())
+        {
+            await stream.CopyToAsync(buffer);
+            bytes = buffer.ToArray();
+        }
+
+        // A fresh ByteArrayContent per request: HttpClient cannot resend a
+        // stream that has already been read.
+        var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            selected.ContentType.Length > 0 ? selected.ContentType : "application/octet-stream");
+
+        var result = await Api.PostRawAsync<R2MutationResult>("/api/r2", content);
+        Tracked($"Upload {selected.Name}", "POST", "/api/r2", result);
+
+        file = result.Value?.File;
+        download = null;
+        messageOk = result.HasValue;
+        message = result.HasValue
+            ? result.Value!.Message
+            : result.Error ?? $"{result.Status} {result.Reason}";
+    });
+
+    async Task DownloadAsync() => await GuardAsync(async () =>
+    {
+        var result = await Api.DownloadAsync<R2FileInfo>("/api/r2/download");
+        download = result;
+        Tracked("Download object", "GET", "/api/r2/download", result.Result);
+    });
+
+    async Task DeleteAsync() => await GuardAsync(async () =>
+    {
+        var result = await Api.PostAsync<R2MutationResult>("/api/r2/delete");
+        Tracked($"Delete {SampleConfig.R2ObjectKey}", "POST", "/api/r2/delete", result);
+
+        file = result.Value?.File;
+        download = null;
+        messageOk = result.HasValue;
+        message = result.HasValue
+            ? result.Value!.Message
+            : result.Error ?? $"{result.Status} {result.Reason}";
+    });
+}

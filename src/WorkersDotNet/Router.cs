@@ -8,7 +8,7 @@ namespace WorkersDotNet
     /// </summary>
     public static class Router
     {
-        public static async Task<Response> HandleAsync(Request request, Env environment)
+        public static async Task<Response> HandleAsync(Request request, Env environment, Context context)
         {
             switch (request.Path)
             {
@@ -20,6 +20,20 @@ namespace WorkersDotNet
                     return await RedirectEndpoint.HandleAsync(request);
                 case "/api/policy":
                     return await PolicyEndpoint.HandleAsync(request);
+                case "/api/cache":
+                    return await CacheEndpoint.HandleAsync(request, context);
+                case "/api/kv":
+                    return await KvEndpoint.HandleAsync(request, environment);
+                case "/api/r2":
+                    return await R2Endpoint.HandleAsync(request, environment);
+                case "/api/r2/download":
+                    return await R2Endpoint.DownloadAsync(request, environment);
+                case "/api/r2/delete":
+                    return await R2Endpoint.DeleteAsync(request, environment);
+                case "/api/queue":
+                    return await QueueEndpoint.HandleAsync(request, environment);
+                case "/api/scheduled":
+                    return await ScheduledEndpoint.HandleAsync(request, environment);
                 default:
                     // Serve the BlazorWebApp as static files via the ASSETS binding.
                     return await AssetsEndpoint.HandleAsync(request, environment);

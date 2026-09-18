@@ -1,0 +1,51 @@
+@* Sidebar navigation. Each sample gets its own page so the pages stay readable. *@
+
+<div class="sidebar-brand">
+    <span class="brand-mark">CF</span>
+    <div>
+        <div class="brand-title">Workers .NET</div>
+        <div class="brand-sub">C# samples on Cloudflare</div>
+    </div>
+</div>
+
+<nav class="nav">
+    @foreach (var group in Groups)
+    {
+        <div class="nav-group">
+            <div class="nav-group-title">@group.Title</div>
+            @foreach (var item in group.Items)
+            {
+                <NavLink class="nav-link" href="@item.Href" Match="@item.Match" title="@item.Description">
+                    <span class="nav-icon">@item.Icon</span>
+                    <span class="nav-label">@item.Label</span>
+                </NavLink>
+            }
+        </div>
+    }
+</nav>
+
+@code {
+    sealed record NavItem(string Href, string Label, string Icon, string Description, NavLinkMatch Match = NavLinkMatch.Prefix);
+
+    sealed record NavGroup(string Title, IReadOnlyList<NavItem> Items);
+
+    static readonly NavGroup[] Groups =
+    [
+        new NavGroup("Start",
+        [
+            new NavItem("", "Overview", "🏠", "What these samples are and how to run them", NavLinkMatch.All),
+            new NavItem("basics", "Request basics", "🧭", "JSON, proxy fetch, redirect and request validation")
+        ]),
+        new NavGroup("Bindings",
+        [
+            new NavItem("cache", "Cache API", "⚡", "caches.default: hit/miss and purge"),
+            new NavItem("kv", "KV", "🗄️", "dotnet_test namespace, 3 fixed keys, 64 characters max"),
+            new NavItem("r2", "R2 bucket", "📦", "dotnettest bucket, sample_file.txt, 1 KB max")
+        ]),
+        new NavGroup("Async work",
+        [
+            new NavItem("queue", "Queue", "📨", "dotnet-queue producer and consumer"),
+            new NavItem("scheduled", "Scheduled task", "⏰", "Hourly cron writing to KV")
+        ])
+    ];
+}

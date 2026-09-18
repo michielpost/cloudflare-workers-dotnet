@@ -1,0 +1,89 @@
+@page "/"
+@inject WorkerApi Api
+
+<PageTitle>Cloudflare Workers .NET samples</PageTitle>
+
+<PageHeader Title="Cloudflare Workers .NET samples"
+            Subtitle="Five worker samples written in C# and compiled to JavaScript. Every sample has a matching page here, and all of them talk to the worker that Aspire starts locally on port 8787."
+            Tags="@(new[] { "Workers 0.3.0", ".NET 10", "Blazor WASM", "wrangler dev" })" />
+
+<div class="stack">
+    <SampleCard Title="What is running" BodyClass="stack">
+        <p class="muted" style="margin-top:0">
+            The C# worker in <code>src/WorkersDotNet</code> is compiled to <code>dist/worker.js</code> by the
+            <code>Workers</code> NuGet package and served by Wrangler. This Blazor WebAssembly app calls it over
+            HTTP. Locally, KV, R2 and queues are simulated by Wrangler, so nothing is uploaded to Cloudflare.
+        </p>
+
+        <div class="kpi-row">
+            <div class="kpi">
+                <div class="kpi-label">Worker API</div>
+                <div class="kpi-value">@Api.DisplayBaseUrl</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">KV namespace</div>
+                <div class="kpi-value">@SampleConfig.KvNamespaceName</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">R2 bucket</div>
+                <div class="kpi-value">@SampleConfig.R2BucketName</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">Queue</div>
+                <div class="kpi-value">@SampleConfig.QueueName</div>
+            </div>
+        </div>
+    </SampleCard>
+
+    <div class="overview-grid">
+        @foreach (var sample in Samples)
+        {
+            <a class="overview-card" href="@sample.Href">
+                <span class="overview-icon">@sample.Icon</span>
+                <span class="overview-title">@sample.Title</span>
+                <span class="overview-desc">@sample.Description</span>
+                <span class="overview-bindings">
+                    @foreach (var binding in sample.Bindings)
+                    {
+                        <span class="tag">@binding</span>
+                    }
+                </span>
+            </a>
+        }
+    </div>
+
+    <SampleCard Title="Running it locally">
+        <ol class="step-list">
+            <li><code>dotnet run --project src/Aspire/Aspire.AppHost</code> starts this frontend and Wrangler together.</li>
+            <li>The worker listens on <code>http://localhost:8787</code>; the frontend reads that URL from <code>wwwroot/appsettings.Development.json</code>.</li>
+            <li>State lives in <code>.wrangler/state/v3</code> (KV, R2, queues and the cache), so results survive restarts.</li>
+            <li>The scheduled sample is registered as an hourly cron; <code>wrangler dev --test-scheduled</code> also exposes <code>/__scheduled</code> so the cron can be triggered on demand from the Scheduled task page.</li>
+        </ol>
+    </SampleCard>
+</div>
+
+@code {
+    sealed record SampleCardInfo(string Href, string Icon, string Title, string Description, string[] Bindings);
+
+    static readonly SampleCardInfo[] Samples =
+    [
+        new("/basics", "🧭", "Request basics",
+            "JSON responses, a proxied fetch, a 302 redirect and a validated JSON POST — the starting point of the worker.",
+            ["/api/json", "/api/proxy", "/api/policy"]),
+        new("/cache", "⚡", "Cache API",
+            "Worker-side caching through caches.default: the first request is a miss, the next ones are hits, and a purge makes it a miss again.",
+            ["caches.default"]),
+        new("/kv", "🗄️", "KV storage",
+            "Write up to 64 characters into one of three fixed keys and read the values straight back.",
+            ["env.KV", "dotnet_test"]),
+        new("/r2", "📦", "R2 bucket",
+            "Upload a file of at most 1 KB, download it again and delete it. Every upload lands on the same key.",
+            ["env.R2", "dotnettest", "sample_file.txt"]),
+        new("/queue", "📨", "Queues",
+            "A producer puts short messages on dotnet-queue, a consumer picks them up and stores the result in KV.",
+            ["env.QUEUE", "code-queue handler"]),
+        new("/scheduled", "⏰", "Scheduled task",
+            "An hourly cron writes a run record to KV; the page shows the latest value and the run history.",
+            ["triggers.crons", "code-scheduled handler"])
+    ];
+}

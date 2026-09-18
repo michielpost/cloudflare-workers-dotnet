@@ -1,0 +1,35 @@
+@* Inline message used for validation feedback and transport errors. *@
+
+@if (!string.IsNullOrWhiteSpace(Message) || ChildContent is not null)
+{
+    <div class="notice notice-@Kind.ToLowerInvariant()">
+        <span class="notice-icon">@Icon</span>
+        <div class="notice-text">
+            @if (!string.IsNullOrWhiteSpace(Message))
+            {
+                <span>@Message</span>
+            }
+            @ChildContent
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>One of: ok, info, warn, err.</summary>
+    [Parameter]
+    public string Kind { get; set; } = "info";
+
+    [Parameter]
+    public string? Message { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    string Icon => Kind.ToLowerInvariant() switch
+    {
+        "ok" => "✓",
+        "warn" => "!",
+        "err" => "✕",
+        _ => "i"
+    };
+}

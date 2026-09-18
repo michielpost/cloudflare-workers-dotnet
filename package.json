@@ -2,7 +2,7 @@
   "name": "cloudflare-workers-dotnet",
   "private": true,
   "scripts": {
-    "worker:dev": "dotnet publish src/WorkersDotNet -c Release && npx wrangler dev -c wrangler.dev.toml --port 8787"
+    "worker:dev": "dotnet publish src/WorkersDotNet -c Release && npx wrangler dev -c wrangler.dev.toml --port 8787 --test-scheduled"
   },
   "devDependencies": {
     "wrangler": "^4.134.0"

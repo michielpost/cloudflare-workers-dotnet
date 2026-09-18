@@ -17,7 +17,7 @@ namespace WorkersDotNet
             if (request.Method == "OPTIONS")
                 return Cors.Preflight(origin, environment);
 
-            var response = await Router.HandleAsync(request, environment);
+            var response = await Router.HandleAsync(request, environment, context);
 
             // Allow the originating frontend domain (when it is on the
             // ALLOWED_ORIGINS list) to read the response.

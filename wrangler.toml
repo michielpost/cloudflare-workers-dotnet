@@ -23,3 +23,46 @@ command = "sh cloudflarebuild.sh"
 #   ALLOWED_ORIGINS = "https://my-frontend.pages.dev,https://app.example.com"
 [vars]
 ALLOWED_ORIGINS = ""
+
+# Enables the Cache API in local development. Without this `wrangler dev`
+# answers caches.default.match() with "nothing cached" and silently drops
+# caches.default.put(), so the cache sample could never show a hit locally.
+[cache]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Bindings used by the sample endpoints. All of them work locally
+# (`wrangler dev` simulates KV, R2 and queues on this machine) without a
+# Cloudflare account; the ids/names below are what the deployed resources must
+# be called.
+# ---------------------------------------------------------------------------
+
+# KV namespace "dotnet_test". It backs the KV sample itself, the queue consumer
+# (key "queue_result") and the scheduled task (key "scheduled_result").
+# Always write to this namespace through the KV binding: wrangler keys the local
+# copy by this id, so reads and writes keep hitting the same store.
+# Run `npx wrangler kv namespace list` and paste the real id here to deploy.
+[[kv_namespaces]]
+binding = "KV"
+id = "dotnet_test"
+
+# R2 bucket "dotnettest", holding the single object "sample_file.txt" of the R2
+# sample. Run `npx wrangler r2 bucket create dotnettest` to deploy it.
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "dotnettest"
+
+# Queue "dotnet-queue": the producer sample sends to it and the consumer sample
+# reads from it. Run `npx wrangler queues create dotnet-queue` to deploy it.
+[[queues.producers]]
+binding = "QUEUE"
+queue = "dotnet-queue"
+
+[[queues.consumers]]
+queue = "dotnet-queue"
+
+# Fires the scheduled sample every hour. Locally, `wrangler dev --test-scheduled`
+# lets you trigger it on demand with GET /__scheduled, and the "Run now" button
+# in the Blazor UI runs the very same code through POST /api/scheduled.
+[triggers]
+crons = ["0 * * * *"]

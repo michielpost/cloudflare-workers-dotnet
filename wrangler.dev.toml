@@ -24,9 +24,51 @@ not_found_handling = "single-page-application"
 # There is no wildcard: an origin must match exactly, and an empty list grants
 # no cross-origin access at all.
 #
-# During local development the Blazor frontend is served by `dotnet run`/Aspire
-# on the ports in src/BlazorWebApp/Properties/launchSettings.json while the
-# worker listens on http://localhost:8787, so the frontend origins must be
-# listed here.
+# During local development the Blazor frontend is served by Aspire (or
+# `dotnet run`) on port 5217 - pinned in src/Aspire/Aspire.AppHost/AppHost.cs -
+# while the worker listens on http://localhost:8787, so the frontend origins must
+# be listed here. Change the port in AppHost.cs and it has to be changed here too.
 [vars]
 ALLOWED_ORIGINS = "http://localhost:5217,https://localhost:7000"
+
+# Enables the Cache API in local development. Without this `wrangler dev`
+# answers caches.default.match() with "nothing cached" and silently drops
+# caches.default.put(), so the cache sample could never show a hit locally.
+[cache]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Bindings used by the sample endpoints. `wrangler dev` simulates KV, R2 and
+# queues locally, so all of these work without a Cloudflare account and without
+# signing in. Their state is kept in .wrangler/state/v3/ and survives restarts;
+# delete that folder to start from a clean slate.
+# ---------------------------------------------------------------------------
+
+# KV namespace "dotnet_test". It backs the KV sample itself, the queue consumer
+# (key "queue_result") and the scheduled task (key "scheduled_result").
+[[kv_namespaces]]
+binding = "KV"
+id = "dotnet_test"
+
+# R2 bucket "dotnettest", holding the single object "sample_file.txt" of the R2
+# sample.
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "dotnettest"
+
+# Queue "dotnet-queue": the producer sample sends to it and the consumer sample
+# reads from it. wrangler delivers the messages to the consumer in this same
+# local process, so no account is involved.
+[[queues.producers]]
+binding = "QUEUE"
+queue = "dotnet-queue"
+
+[[queues.consumers]]
+queue = "dotnet-queue"
+
+# Fires the scheduled sample every hour. Cron events do not fire on their own in
+# local dev; start with `wrangler dev --test-scheduled` to trigger one on demand
+# with GET /__scheduled, or use the "Run now" button in the Blazor UI, which
+# calls the exact same code through POST /api/scheduled.
+[triggers]
+crons = ["0 * * * *"]
