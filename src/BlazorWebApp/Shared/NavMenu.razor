@@ -46,6 +46,11 @@
         [
             new NavItem("queue", "Queue", "📨", "dotnet-queue producer and consumer"),
             new NavItem("scheduled", "Scheduled task", "⏰", "Hourly cron writing to KV")
+        ]),
+        new NavGroup("Data",
+        [
+            new NavItem("d1", "D1 database", "🗃️", "items table with create, edit and delete"),
+            new NavItem("telemetry", "Weather sensors", "📡", "cron to D1 to queue to rate gate to API")
         ])
     ];
 }

@@ -8,10 +8,13 @@ namespace WorkersDotNet
     /// scheduled (cron) task.
     /// </summary>
     /// <remarks>
-    /// Both write their result to the KV namespace, which is exactly what the
-    /// frontend reads back through <see cref="QueueEndpoint"/> and
-    /// <see cref="ScheduledEndpoint"/>. The worker has no shared memory between
-    /// requests, so the binding is the hand-off.
+    /// A worker can register exactly one queue handler and one scheduled handler,
+    /// but several samples in this repo use them, so both handlers here are
+    /// dispatchers: the queue one looks at <c>batch.Queue</c> and the scheduled one
+    /// at <c>scheduled.Cron</c>, then forwards to the right sample's code.
+    /// Everything the handlers produce is written to a binding - KV or D1 - which
+    /// is the only way to hand a result back to a later HTTP request, because a
+    /// worker keeps no state between invocations.
     /// </remarks>
     public static class WorkerEvents
     {
@@ -21,17 +24,23 @@ namespace WorkersDotNet
         const int HistoryLength = SampleConfig.HistoryLength;
 
         /// <summary>
-        /// Consumes the messages the producer put on <c>dotnet-queue</c> and stores
-        /// the text plus the queued/processed dates under the fixed KV key
-        /// <c>queue_result</c>.
+        /// Consumes the messages of both queues: <c>dotnet-queue</c> for the queue
+        /// sample (the text plus its dates into KV) and <c>dotnet-telemetry</c> for
+        /// the telemetry pipeline (one reading per message into D1).
         /// </summary>
         [Queue]
         public static async Task ConsumeAsync(
-            QueueMessageBatch<QueueJob> batch,
+            QueueMessageBatch<QueuedMessage> batch,
             Env environment,
             Context context)
         {
             Console.WriteLine($"Queue consumer received {batch.Count} message(s) from {batch.Queue}");
+
+            if (batch.Queue == SampleConfig.TelemetryQueueName)
+            {
+                await ConsumeTelemetryAsync(batch, environment);
+                return;
+            }
 
             foreach (var message in batch)
             {
@@ -49,14 +58,59 @@ namespace WorkersDotNet
         }
 
         /// <summary>
-        /// Runs every hour (see <c>[triggers]</c> in wrangler.toml) and stores the
-        /// run in the KV namespace. The KV write happens after the event returns,
-        /// so it is handed to <c>context.WaitUntil</c>.
+        /// The telemetry pipeline's consumer. Every message is handled on its own:
+        /// a job that fails is retried with a delay that grows per attempt, and it
+        /// is only acked once it either succeeded or ran out of attempts. One bad
+        /// sensor therefore never blocks the rest of the batch.
+        /// </summary>
+        static async Task ConsumeTelemetryAsync(QueueMessageBatch<QueuedMessage> batch, Env environment)
+        {
+            foreach (var message in batch)
+            {
+                var attempts = message.Attempts;
+
+                try
+                {
+                    await TelemetryEndpoint.ProcessJobAsync(environment, message.Body, attempts);
+                    message.Ack();
+                }
+                catch (Exception exception)
+                {
+                    var delay = attempts * 10;
+                    if (delay < 10)
+                        delay = 10;
+
+                    if (attempts < SampleConfig.TelemetryMaxAttempts)
+                    {
+                        Console.Error.WriteLine($"Telemetry job {message.Body.JobId} failed on attempt {attempts}, retrying in {delay}s: {exception.Message}");
+                        await TelemetryEndpoint.MarkJobAsync(environment, message.Body.JobId, "retrying", attempts, exception.Message);
+                        message.Retry(new QueueRetryOptions { DelaySeconds = delay });
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Telemetry job {message.Body.JobId} failed {attempts} times and is given up: {exception.Message}");
+                        await TelemetryEndpoint.MarkJobAsync(environment, message.Body.JobId, "failed", attempts, exception.Message);
+                        message.Ack();
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Runs the cron triggers: the telemetry pipeline every 5 minutes, the
+        /// scheduled-task sample every hour. The work happens after the event
+        /// returns, so it is handed to <c>context.WaitUntil</c>.
         /// </summary>
         [Scheduled]
         public static void OnSchedule(ScheduledEvent scheduled, Env environment, Context context)
         {
             Console.WriteLine($"Scheduled task {scheduled.Cron} fired for {scheduled.ScheduledTime:O}");
+
+            if (scheduled.Cron == SampleConfig.TelemetryCron)
+            {
+                context.WaitUntil(TelemetryEndpoint.EnqueueDueAsync(environment));
+                return;
+            }
 
             context.WaitUntil(
                 ScheduledEndpoint.WriteRunAsync(

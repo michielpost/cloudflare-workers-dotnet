@@ -1,0 +1,453 @@
+@page "/telemetry"
+@inherits SamplePageBase
+@implements IDisposable
+
+<PageTitle>Weather sensor pipeline</PageTitle>
+
+<PageHeader Title="Weather sensor pipeline"
+            Subtitle="The full flow of the reference TelemetryPipeline sample, in C#: a cron trigger looks in D1 for the sensors that are due, puts one job per sensor on a queue, the consumer takes a lease at a RateGate Durable Object so only one outbound call runs at a time, calls the weather API with a timeout and writes the reading back to D1. A failing call is retried with a growing delay, and when the provider cannot be reached at all the reading is marked as simulated, so the sample keeps working offline."
+            Tags="@(new[] { "triggers.crons", "env.DB", SampleConfig.TelemetryQueueName, "RATE_GATE", SampleConfig.WeatherApiName })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="The flow" Description="Every node lights up while it has work: a queued job, a held lease or a fresh reading.">
+        <div class="pipeline">
+            <div class="pipeline-node @(running ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">Cron trigger</div>
+                <div class="pipeline-node-sub">@(status?.Cron ?? SampleConfig.TelemetryCron)</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(dueSensors > 0 ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">D1: due sensors</div>
+                <div class="pipeline-node-sub">@dueSensors of @(status?.Stats.Sensors ?? 0) due now</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(queuedJobs > 0 ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">Queue</div>
+                <div class="pipeline-node-sub">@(status?.QueueName ?? SampleConfig.TelemetryQueueName): @queuedJobs in flight</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(status?.Gate.Busy == true ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">RateGate</div>
+                <div class="pipeline-node-sub">@GateText()</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(running ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">Weather API</div>
+                <div class="pipeline-node-sub">@(status?.WeatherApi ?? SampleConfig.WeatherApiName)</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-node @(newReadings ? "pipeline-node-active" : "")">
+                <div class="pipeline-node-title">D1: readings</div>
+                <div class="pipeline-node-sub">@(status?.Stats.Readings ?? 0) stored</div>
+            </div>
+        </div>
+
+        @if (waiting)
+        {
+            <Notice Kind="info">
+                <span class="pulse">Waiting for the consumer to finish the queued jobs…</span>
+            </Notice>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Run the pipeline"
+                Description="Local development has no cron scheduler, so the page does the cron's work on demand: find the due sensors, write a job row for each one and put them on the queue.">
+        <div class="kpi-row">
+            <div class="kpi">
+                <div class="kpi-label">readings stored</div>
+                <div class="kpi-value kpi-value-lg">@(status?.Stats.Readings ?? 0)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">jobs in flight</div>
+                <div class="kpi-value kpi-value-lg">@queuedJobs</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">jobs done</div>
+                <div class="kpi-value kpi-value-lg">@(status?.Stats.Done ?? 0)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">jobs failed</div>
+                <div class="kpi-value kpi-value-lg">@(status?.Stats.Failed ?? 0)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">delivery attempts</div>
+                <div class="kpi-value">@(status?.Stats.Attempts ?? 0) / max @(status?.MaxAttempts ?? SampleConfig.TelemetryMaxAttempts)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">lease</div>
+                <div class="kpi-value">@(status?.RateLimitSeconds ?? SampleConfig.TelemetryRateLimitSeconds) s per call</div>
+            </div>
+        </div>
+
+        <div class="btn-row" style="margin-top:1rem">
+            <button class="btn btn-primary" @onclick="RunAsync" disabled="@(Busy || dueSensors == 0)">
+                @if (running)
+                {
+                    <span class="spinner"></span>
+                }
+                Queue @dueSensors due sensor(s)
+            </button>
+            <button class="btn" @onclick="ResetAsync" disabled="@Busy">Make every sensor due again</button>
+            <button class="btn btn-ghost" @onclick="RefreshAsync" disabled="@Busy">Refresh state</button>
+            <button class="btn btn-ghost" @onclick="ClearLog" disabled="@(Busy || Calls.Count == 0)">Clear call log</button>
+        </div>
+
+        @if (runMessage is not null)
+        {
+            <Notice Kind="@(runOk ? "ok" : "warn")" Message="@runMessage" />
+        }
+
+        @if (dueSensors == 0)
+        {
+            <p class="muted">
+                No sensor is due: reading one moves its next read forward by its interval. Use
+                <strong>Make every sensor due again</strong> to get work immediately.
+            </p>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Sensors" Description="The rows the cron trigger selects from, with the due time it compares against.">
+        @if (status is null || status.Sensors.Count == 0)
+        {
+            <p class="muted">No sensors. Apply the schema with <code>npx wrangler d1 execute dotnet --local --file=migrations/0001_init.sql</code>.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Sensor</th>
+                            <th>Coordinates</th>
+                            <th class="num">Interval</th>
+                            <th>Next read</th>
+                            <th>State</th>
+                            <th class="num">Readings</th>
+                            <th class="num">Pending jobs</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var sensor in status.Sensors)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="mono">@sensor.SensorId</div>
+                                    <div class="muted">@sensor.Name</div>
+                                </td>
+                                <td class="mono">@sensor.Latitude.ToString("0.0000"), @sensor.Longitude.ToString("0.0000")</td>
+                                <td class="num mono">@sensor.IntervalMinutes min</td>
+                                <td class="mono" title="@Fmt.Clock(sensor.NextReadAtMs, "yyyy-MM-dd HH:mm:ss")">
+                                    @NextReadText(sensor.NextReadAtMs)
+                                </td>
+                                <td>
+                                    <span class="badge @(sensor.Active == 1 ? "badge-ok" : "badge-neutral")">
+                                        @(sensor.Active == 1 ? "active" : "paused")
+                                    </span>
+                                </td>
+                                <td class="num mono">@sensor.Reads</td>
+                                <td class="num mono">@sensor.Pending</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Latest readings"
+                Description="Written by the consumer once the rate gate let it through. 'simulated' means the weather API could not be reached, so the flow still produced a row.">
+        @if (status is null || status.Readings.Count == 0)
+        {
+            <p class="muted">No readings yet. Queue the due sensors above and the consumer will fill this table.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Sensor</th>
+                            <th class="num">Temperature</th>
+                            <th class="num">PM2.5</th>
+                            <th>Condition</th>
+                            <th>Source</th>
+                            <th>Read at</th>
+                            <th>Processed at</th>
+                            <th class="num">Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var reading in status.Readings)
+                        {
+                            <tr>
+                                <td class="mono">@reading.SensorId</td>
+                                <td class="num mono">@reading.Temperature.ToString("0.0") °C</td>
+                                <td class="num mono">@reading.AirQuality.ToString("0.0") µg/m³</td>
+                                <td>@reading.Condition</td>
+                                <td>
+                                    <span class="badge @(reading.Source == "live" ? "badge-ok" : "badge-warn")">@reading.Source</span>
+                                </td>
+                                <td class="mono">@Fmt.Clock(reading.ReadingAtMs)</td>
+                                <td class="mono" title="@Fmt.Clock(reading.ProcessedAtMs, "yyyy-MM-dd HH:mm:ss")">
+                                    @Fmt.Clock(reading.ProcessedAtMs) <span class="muted">(@Fmt.AgoMs(reading.ProcessedAtMs))</span>
+                                </td>
+                                <td class="num mono">@Fmt.BetweenMs(reading.ReadingAtMs, reading.ProcessedAtMs)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </SampleCard>
+
+    <SampleCard Title="Jobs" Description="One row per queued sensor, so the retry path is visible: attempts counts deliveries, last_error holds the reason.">
+        @if (status is null || status.Jobs.Count == 0)
+        {
+            <p class="muted">No jobs yet.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Job</th>
+                            <th>Sensor</th>
+                            <th>Status</th>
+                            <th class="num">Attempts</th>
+                            <th>Last error</th>
+                            <th>Queued at</th>
+                            <th>Processed at</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var job in status.Jobs)
+                        {
+                            <tr class="@(job.Status == "failed" ? "row-bad" : "")">
+                                <td class="mono">@Short(job.Id)</td>
+                                <td class="mono">@job.SensorId</td>
+                                <td><span class="badge @JobBadge(job.Status)">@job.Status</span></td>
+                                <td class="num mono">@job.Attempts</td>
+                                <td class="muted">@(job.LastError.Length == 0 ? "—" : job.LastError)</td>
+                                <td class="mono">@Fmt.Clock(job.QueuedAtMs)</td>
+                                <td class="mono">@Fmt.Clock(job.ProcessedAtMs)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <RawView Raw="@raw" Label="Raw GET /api/telemetry response" Caption="@caption" />
+    </SampleCard>
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    const int PollIntervalMs = 1_500;
+    const int MaxPolls = 20;
+    const int RefreshIntervalMs = 5_000;
+
+    TelemetryStatus? status;
+    string? raw;
+    string? caption;
+    string? runMessage;
+    bool runOk;
+
+    bool running;
+    bool waiting;
+    bool newReadings;
+
+    int readingsBefore;
+    int polls;
+    System.Threading.Timer? pollTimer;
+    System.Threading.Timer? refreshTimer;
+
+    int dueSensors => status is null ? 0 : status.Sensors.Count(s => s.Active == 1 && s.NextReadAtMs <= NowMs());
+
+    int queuedJobs => status?.Stats.Queued ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync(track: false);
+        StartAutoRefresh();
+    }
+
+    void StartAutoRefresh()
+    {
+        refreshTimer?.Dispose();
+        refreshTimer = new System.Threading.Timer(
+            async _ => await AutoRefreshAsync(), null, RefreshIntervalMs, RefreshIntervalMs);
+    }
+
+    /// <summary>Quiet background refresh: no log entry, no busy flag, skipped while polling.</summary>
+    async Task AutoRefreshAsync()
+    {
+        if (Busy || waiting)
+            return;
+
+        var result = await Api.GetAsync<TelemetryStatus>("/api/telemetry");
+
+        await InvokeAsync(() =>
+        {
+            Apply(result);
+            StateHasChanged();
+        });
+    }
+
+    async Task RefreshAsync() => await LoadAsync(track: true);
+
+    async Task LoadAsync(bool track) => await GuardAsync(async () =>
+    {
+        var result = await Api.GetAsync<TelemetryStatus>("/api/telemetry");
+        Apply(result);
+
+        if (track)
+            Tracked("Read pipeline state", "GET", "/api/telemetry", result);
+    });
+
+    async Task RunAsync() => await GuardAsync(async () =>
+    {
+        running = true;
+        runMessage = null;
+        newReadings = false;
+        readingsBefore = status?.Stats.Readings ?? 0;
+
+        var result = await Api.PostAsync<TelemetryRunResult>("/api/telemetry/run");
+        Tracked("Queue the due sensors", "POST", "/api/telemetry/run", result);
+
+        if (result.Value is not null)
+            status = result.Value.Status;
+
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+        runOk = result.HasValue;
+        runMessage = result.HasValue
+            ? result.Value!.Message
+            : result.Error ?? $"{result.Status} {result.Reason}";
+
+        running = false;
+
+        if (result.HasValue && result.Value!.Enqueued > 0)
+            StartPolling();
+    });
+
+    async Task ResetAsync() => await GuardAsync(async () =>
+    {
+        var result = await Api.PostAsync<TelemetryRunResult>("/api/telemetry/reset");
+        Tracked("Make the sensors due", "POST", "/api/telemetry/reset", result);
+
+        if (result.Value is not null)
+            status = result.Value.Status;
+
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+
+        runOk = result.HasValue;
+        runMessage = result.HasValue
+            ? result.Value!.Message
+            : result.Error ?? $"{result.Status} {result.Reason}";
+    });
+
+    /// <summary>
+    /// The queue consumer runs in its own invocation right after the producer, so
+    /// the page polls until the new readings appear instead of guessing a delay.
+    /// </summary>
+    void StartPolling()
+    {
+        waiting = true;
+        polls = 0;
+
+        pollTimer?.Dispose();
+        pollTimer = new System.Threading.Timer(async _ => await PollAsync(), null, PollIntervalMs, PollIntervalMs);
+    }
+
+    async Task PollAsync()
+    {
+        polls++;
+
+        var result = await Api.GetAsync<TelemetryStatus>("/api/telemetry");
+
+        await InvokeAsync(() =>
+        {
+            Apply(result);
+
+            var stored = status?.Stats.Readings ?? 0;
+            var inFlight = status?.Stats.Queued ?? 0;
+
+            if (stored > readingsBefore)
+                newReadings = true;
+
+            if ((newReadings && inFlight == 0) || polls >= MaxPolls)
+            {
+                waiting = false;
+                pollTimer?.Dispose();
+                pollTimer = null;
+
+                if (newReadings)
+                    runMessage = $"{stored - readingsBefore} new reading(s) stored - see the table below.";
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    void Apply(ApiResult<TelemetryStatus> result)
+    {
+        if (result.Value is not null)
+            status = result.Value;
+
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+    }
+
+    string GateText()
+    {
+        if (status?.Gate.Busy != true)
+            return "free";
+
+        return $"held by {Short(status.Gate.Owner)}";
+    }
+
+    string NextReadText(long nextReadAtMs)
+    {
+        if (nextReadAtMs <= 0)
+            return "due now";
+
+        var seconds = (nextReadAtMs - NowMs()) / 1000.0;
+
+        return seconds <= 0
+            ? "due now"
+            : seconds < 90
+                ? $"in {seconds:0.0} s"
+                : $"in {seconds / 60.0:0.0} min";
+    }
+
+    static string Short(string id) => id.Length > 8 ? id.Substring(0, 8) : id;
+
+    static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    static string JobBadge(string status) => status switch
+    {
+        "done" => "badge-ok",
+        "queued" => "badge-info",
+        "retrying" => "badge-warn",
+        "failed" => "badge-err",
+        _ => "badge-neutral"
+    };
+
+    public void Dispose()
+    {
+        pollTimer?.Dispose();
+        refreshTimer?.Dispose();
+    }
+}

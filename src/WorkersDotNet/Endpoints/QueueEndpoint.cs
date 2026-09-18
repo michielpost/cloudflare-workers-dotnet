@@ -63,7 +63,8 @@ namespace WorkersDotNet
                     400);
 
             var queuedAt = DateTimeOffset.UtcNow.ToString("O");
-            await environment.Queue(Binding).SendJsonAsync(new QueueJob(text, queuedAt));
+            await environment.Queue(Binding)
+                .SendJsonAsync(new QueuedMessage(text, queuedAt, "", 0));
 
             var result = new QueueSendResult(
                 true,

@@ -4,7 +4,7 @@
 <PageTitle>Cloudflare Workers .NET samples</PageTitle>
 
 <PageHeader Title="Cloudflare Workers .NET samples"
-            Subtitle="Five worker samples written in C# and compiled to JavaScript. Every sample has a matching page here, and all of them talk to the worker that Aspire starts locally on port 8787."
+            Subtitle="Eight worker samples written in C# and compiled to JavaScript, from a single JSON response to a full telemetry pipeline that uses cron, D1, queues, a Durable Object and the Cache API. Every sample has a matching page here, and all of them talk to the worker that Aspire starts locally on port 8787."
             Tags="@(new[] { "Workers 0.3.0", ".NET 10", "Blazor WASM", "wrangler dev" })" />
 
 <div class="stack">
@@ -84,6 +84,12 @@
             ["env.QUEUE", "code-queue handler"]),
         new("/scheduled", "⏰", "Scheduled task",
             "An hourly cron writes a run record to KV; the page shows the latest value and the run history.",
-            ["triggers.crons", "code-scheduled handler"])
+            ["triggers.crons", "code-scheduled handler"]),
+        new("/d1", "🗃️", "D1 database",
+            "Full CRUD against the items table of the dotnet database: create, list, edit and delete rows.",
+            ["env.DB", "dotnet", "items"]),
+        new("/telemetry", "📡", "Weather sensors",
+            "The end-to-end pipeline: cron and D1 pick the due sensors, a queue drives the consumer, a Durable Object rate gate serialises the weather API calls, and the reading lands back in D1.",
+            ["triggers.crons", "env.DB", "dotnet-telemetry", "RATE_GATE"])
     ];
 }

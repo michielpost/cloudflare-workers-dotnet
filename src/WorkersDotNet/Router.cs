@@ -34,6 +34,18 @@ namespace WorkersDotNet
                     return await QueueEndpoint.HandleAsync(request, environment);
                 case "/api/scheduled":
                     return await ScheduledEndpoint.HandleAsync(request, environment);
+                case "/api/items":
+                    return await ItemsEndpoint.HandleAsync(request, environment);
+                case "/api/items/update":
+                    return await ItemsEndpoint.UpdateAsync(request, environment);
+                case "/api/items/delete":
+                    return await ItemsEndpoint.DeleteAsync(request, environment);
+                case "/api/telemetry":
+                    return await TelemetryEndpoint.HandleAsync(request, environment);
+                case "/api/telemetry/run":
+                    return await TelemetryEndpoint.RunAsync(environment);
+                case "/api/telemetry/reset":
+                    return await TelemetryEndpoint.ResetAsync(environment);
                 default:
                     // Serve the BlazorWebApp as static files via the ASSETS binding.
                     return await AssetsEndpoint.HandleAsync(request, environment);

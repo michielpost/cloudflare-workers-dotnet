@@ -61,8 +61,44 @@ queue = "dotnet-queue"
 [[queues.consumers]]
 queue = "dotnet-queue"
 
-# Fires the scheduled sample every hour. Locally, `wrangler dev --test-scheduled`
-# lets you trigger it on demand with GET /__scheduled, and the "Run now" button
-# in the Blazor UI runs the very same code through POST /api/scheduled.
+# D1 database "dotnet": the CRUD sample (table items) and the telemetry pipeline
+# (tables sensors, readings, jobs). Create it with
+#   npx wrangler d1 create dotnet
+# and put the printed id here; then apply the schema to the deployed database with
+#   npx wrangler d1 execute dotnet --remote --file=migrations/0001_init.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "dotnet"
+database_id = "39d2b30e-716f-4196-bb9e-70cb52d96628"
+migrations_dir = "migrations"
+
+# Queue "dotnet-telemetry": the telemetry pipeline's cron trigger sends sensor
+# jobs to it and the queue consumer processes them. Create it with
+#   npx wrangler queues create dotnet-telemetry
+[[queues.producers]]
+binding = "TELEMETRY"
+queue = "dotnet-telemetry"
+
+[[queues.consumers]]
+queue = "dotnet-telemetry"
+max_batch_size = 10
+max_batch_timeout = 5
+
+# Durable Object "RateGate": a single named instance that hands out a 30 second
+# lease, so only one outbound weather API call is in flight at a time. Durable
+# Objects need a migration, which is applied by the next `wrangler deploy`.
+[[durable_objects.bindings]]
+name = "RATE_GATE"
+class_name = "RateGate"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateGate"]
+
+# Fires the scheduled handlers: the scheduled-task sample every hour, and the
+# telemetry pipeline every 5 minutes to poll the sensors that are due. Locally,
+# `wrangler dev --test-scheduled` lets you trigger one on demand with
+# GET /__scheduled?cron=*/5+*+*+*+*, and the buttons in the Blazor UI run the very
+# same code through POST /api/scheduled and POST /api/telemetry/run.
 [triggers]
-crons = ["0 * * * *"]
+crons = ["0 * * * *", "*/5 * * * *"]

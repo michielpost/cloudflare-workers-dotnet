@@ -202,6 +202,35 @@ code,
     color: var(--text-dim);
 }
 
+.sidebar-github {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    padding: .55rem .6rem;
+    margin-top: -.25rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    font-size: .82rem;
+    font-weight: 600;
+    background: rgba(255, 255, 255, .02);
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+
+.sidebar-github svg {
+    width: 1.05rem;
+    height: 1.05rem;
+    flex-shrink: 0;
+}
+
+.sidebar-github:hover {
+    background: rgba(255, 255, 255, .05);
+    color: var(--text);
+    border-color: var(--line-soft);
+    text-decoration: none;
+}
+
 .content {
     min-width: 0;
     display: flex;
@@ -756,6 +785,20 @@ input[type=file] {
     font-style: italic;
 }
 
+/* Inline editing: the D1 page puts inputs straight into the row's cells, so they
+   are compact here instead of the stacked, full-width field style. */
+.data-table input[type=text],
+.data-table select {
+    padding: .35rem .5rem;
+    font-size: .82rem;
+}
+
+.cell-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+}
+
 /* ------------------------------------------------------------------ *
  * Code and raw response viewer
  * ------------------------------------------------------------------ */
@@ -1137,6 +1180,12 @@ input[type=file] {
 
     .sidebar-foot {
         display: none;
+    }
+
+    .sidebar-github {
+        margin-top: 0;
+        padding: .45rem .6rem;
+        font-size: .8rem;
     }
 
     .page {

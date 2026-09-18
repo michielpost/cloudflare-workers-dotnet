@@ -10,10 +10,18 @@
     <PackageReference Include="Workers" Version="0.3.0" />
   </ItemGroup>
 
+	<ItemGroup>
+		<None Remove="dist\**" />
+	</ItemGroup>
+
   <!-- The Workers compiler compiles this project's source files (via @(Compile)),
-       so link the shared model into the worker build. -->
+       so link the shared models into the worker build. They are grouped by
+       feature in subfolders (Kv, Queue, D1, Telemetry, ...), so include them all
+       but leave out the Shared project's own build output. -->
   <ItemGroup>
-    <Compile Include="../Shared/Models.cs" Link="Shared/Models.cs" />
+    <Compile Include="../Shared/**/*.cs"
+             Exclude="../Shared/obj/**;../Shared/bin/**"
+             LinkBase="Shared" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,380 @@
+@page "/d1"
+@inherits SamplePageBase
+
+<PageTitle>D1 database</PageTitle>
+
+<PageHeader Title="D1 database"
+            Subtitle="Cloudflare's SQLite database, reached with env.DB. This page runs the whole CRUD cycle against the items table - create, list, edit and delete - and every answer carries the fresh list, so the table is never out of date. Locally wrangler keeps the database in a file under .wrangler/state/v3/d1."
+            Tags="@(new[] { "env.DB", SampleConfig.D1DatabaseName, SampleConfig.D1ItemsTable, "SQL", "CRUD" })" />
+
+<div class="stack">
+    @if (TransportError is not null)
+    {
+        <Notice Kind="err" Message="@($"Could not reach the worker at {Api.DisplayBaseUrl}: {TransportError}")" />
+    }
+
+    <SampleCard Title="The table" Description="Counts come from the same GET the list below uses, so worker and UI always agree.">
+        <div class="kpi-row">
+            <div class="kpi">
+                <div class="kpi-label">database</div>
+                <div class="kpi-value">@(snapshot?.DatabaseName ?? SampleConfig.D1DatabaseName)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">table</div>
+                <div class="kpi-value">@(snapshot?.Table ?? SampleConfig.D1ItemsTable)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">rows returned</div>
+                <div class="kpi-value kpi-value-lg">@(snapshot?.Count ?? 0)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">list limit</div>
+                <div class="kpi-value">@SampleConfig.ItemListLimit rows</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-label">last read</div>
+                <div class="kpi-value">@lastRead</div>
+            </div>
+        </div>
+
+        <div class="btn-row" style="margin-top:1rem">
+            <button class="btn" @onclick="RefreshAsync" disabled="@Busy">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Reload from D1
+            </button>
+            <button class="btn btn-ghost" @onclick="ClearLog" disabled="@(Busy || Calls.Count == 0)">Clear call log</button>
+        </div>
+    </SampleCard>
+
+    <SampleCard Title="Create an item"
+                Description="The worker validates the title, the notes and the status before it writes the row, and answers with the item it created.">
+        <div class="inline-fields">
+            <div class="field">
+                <label class="field-label" for="item-title">Title</label>
+                <input id="item-title" type="text" maxlength="@TitleLimit" @bind="newTitle" @bind:event="oninput"
+                       @onkeydown="OnKeyDown" placeholder="Ship the D1 sample" />
+                <div class="counter @(newTitle.Length > TitleLimit ? "counter-over" : "")">
+                    @newTitle.Length / @TitleLimit characters
+                </div>
+            </div>
+            <div class="field">
+                <label class="field-label" for="item-status">Status</label>
+                <select id="item-status" @bind="newStatus">
+                    @foreach (var option in Statuses)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </select>
+                <div class="field-hint">The allowed values come from the worker.</div>
+            </div>
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="item-notes">Notes</label>
+            <textarea id="item-notes" maxlength="@NotesLimit" @bind="newNotes" @bind:event="oninput"
+                      placeholder="Optional, up to @NotesLimit characters"></textarea>
+            <div class="counter @(newNotes.Length > NotesLimit ? "counter-over" : "")">
+                @newNotes.Length / @NotesLimit characters
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="CreateAsync" disabled="@(Busy || !CanCreate)">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                Insert row
+            </button>
+            <button class="btn" @onclick="LoadSampleAsync" disabled="@Busy">Fill with an example</button>
+        </div>
+
+        @if (createMessage is not null)
+        {
+            <Notice Kind="@(createOk ? "ok" : "warn")" Message="@createMessage" />
+        }
+    </SampleCard>
+
+    <SampleCard Title="Items" Description="Newest first. Edit rewrites the row in place, delete asks once before it removes it.">
+        @if (snapshot is null || snapshot.Items.Count == 0)
+        {
+            <p class="muted">The items table is empty. Insert a row above to fill it.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th class="num">#</th>
+                            <th>Title</th>
+                            <th>Notes</th>
+                            <th>Status</th>
+                            <th>Updated</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in snapshot.Items)
+                        {
+                            <tr class="@(pendingDeleteId == item.Id ? "row-bad" : "")">
+                                <td class="num mono">@item.Id</td>
+                                @if (editingId == item.Id)
+                                {
+                                    <td>
+                                        <input type="text" maxlength="@TitleLimit" @bind="editTitle" @bind:event="oninput" />
+                                    </td>
+                                    <td>
+                                        <input type="text" maxlength="@NotesLimit" @bind="editNotes" @bind:event="oninput" />
+                                    </td>
+                                    <td>
+                                        <select @bind="editStatus">
+                                            @foreach (var option in Statuses)
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    <td class="mono muted">@Fmt.Ago(item.UpdatedAtUtc)</td>
+                                    <td>
+                                        <div class="cell-actions">
+                                            <button class="btn btn-sm btn-primary" @onclick="SaveAsync" disabled="@(Busy || !CanSave)">
+                                                Save
+                                            </button>
+                                            <button class="btn btn-sm btn-ghost" @onclick="CancelEdit" disabled="@Busy">Cancel</button>
+                                        </div>
+                                    </td>
+                                }
+                                else
+                                {
+                                    <td class="mono">@item.Title</td>
+                                    <td class="muted">@(item.Notes.Length == 0 ? "—" : item.Notes)</td>
+                                    <td><span class="badge @StatusBadge(item.Status)">@item.Status</span></td>
+                                    <td class="mono" title="@Fmt.Local(item.UpdatedAtUtc, "yyyy-MM-dd HH:mm:ss")">
+                                        @Fmt.Ago(item.UpdatedAtUtc)
+                                    </td>
+                                    <td>
+                                        <div class="cell-actions">
+                                            @if (pendingDeleteId == item.Id)
+                                            {
+                                                <button class="btn btn-sm btn-danger" @onclick="DeleteAsync" disabled="@Busy">
+                                                    Delete #@item.Id
+                                                </button>
+                                                <button class="btn btn-sm btn-ghost" @onclick="CancelDelete" disabled="@Busy">Keep</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-sm" @onclick="() => BeginEdit(item)" disabled="@Busy">Edit</button>
+                                                <button class="btn btn-sm btn-ghost" @onclick="() => AskDelete(item)" disabled="@Busy">Delete</button>
+                                            }
+                                        </div>
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (rowMessage is not null)
+        {
+            <Notice Kind="@(rowOk ? "ok" : "warn")" Message="@rowMessage" />
+        }
+
+        <RawView Raw="@raw" Label="Raw GET /api/items response" Caption="@caption" />
+    </SampleCard>
+
+    <SampleCard Title="Calls made from this page" Compact>
+        <ApiCallLog Entries="Calls" />
+    </SampleCard>
+</div>
+
+@code {
+    const int TitleLimit = SampleConfig.ItemMaxTitleLength;
+    const int NotesLimit = SampleConfig.ItemMaxNotesLength;
+
+    static readonly IReadOnlyList<string> FallbackStatuses = ["open", "in-progress", "done"];
+
+    ItemsSnapshot? snapshot;
+    string? raw;
+    string? caption;
+    string lastRead = "not read yet";
+
+    string newTitle = "";
+    string newNotes = "";
+    string newStatus = "open";
+    string? createMessage;
+    bool createOk;
+
+    long editingId;
+    string editTitle = "";
+    string editNotes = "";
+    string editStatus = "open";
+
+    long pendingDeleteId;
+    string? rowMessage;
+    bool rowOk;
+
+    IReadOnlyList<string> Statuses => snapshot?.Statuses is { Count: > 0 } statuses ? statuses : FallbackStatuses;
+
+    bool CanCreate => newTitle.Trim().Length > 0 && newTitle.Trim().Length <= TitleLimit && newNotes.Trim().Length <= NotesLimit;
+
+    bool CanSave => editTitle.Trim().Length > 0 && editTitle.Trim().Length <= TitleLimit && editNotes.Trim().Length <= NotesLimit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync(track: false);
+        newStatus = Statuses[0];
+    }
+
+    async Task RefreshAsync() => await LoadAsync(track: true);
+
+    async Task LoadAsync(bool track) => await GuardAsync(async () =>
+    {
+        var result = await Api.GetAsync<ItemsSnapshot>("/api/items");
+        Apply(result);
+
+        if (track)
+            Tracked("List items", "GET", "/api/items", result);
+    });
+
+    async Task CreateAsync() => await GuardAsync(async () =>
+    {
+        createMessage = null;
+
+        var result = await Api.PostJsonAsync<ItemMutationResult>(
+            "/api/items",
+            new ItemCreateRequest(newTitle.Trim(), newNotes.Trim(), newStatus));
+
+        Tracked($"Create \"{newTitle.Trim()}\"", "POST", "/api/items", result);
+
+        ApplyMutation(result);
+
+        if (result.HasValue)
+        {
+            createOk = true;
+            createMessage = result.Value!.Message;
+            newTitle = "";
+            newNotes = "";
+        }
+        else
+        {
+            createOk = false;
+            createMessage = result.Error ?? $"{result.Status} {result.Reason}";
+        }
+    });
+
+    async Task SaveAsync() => await GuardAsync(async () =>
+    {
+        var id = editingId;
+
+        var result = await Api.PostJsonAsync<ItemMutationResult>(
+            "/api/items/update",
+            new ItemUpdateRequest(id, editTitle.Trim(), editNotes.Trim(), editStatus));
+
+        Tracked($"Update #{id}", "POST", "/api/items/update", result);
+
+        ApplyMutation(result);
+
+        rowOk = result.HasValue;
+        rowMessage = result.HasValue
+            ? result.Value!.Message
+            : result.Error ?? $"{result.Status} {result.Reason}";
+
+        if (result.HasValue)
+            editingId = 0;
+    });
+
+    async Task DeleteAsync() => await GuardAsync(async () =>
+    {
+        var id = pendingDeleteId;
+
+        var result = await Api.PostJsonAsync<ItemMutationResult>("/api/items/delete", new ItemDeleteRequest(id));
+
+        Tracked($"Delete #{id}", "POST", "/api/items/delete", result);
+
+        ApplyMutation(result);
+
+        rowOk = result.HasValue;
+        rowMessage = result.HasValue
+            ? result.Value!.Message
+            : result.Error ?? $"{result.Status} {result.Reason}";
+
+        pendingDeleteId = 0;
+    });
+
+    void Apply(ApiResult<ItemsSnapshot> result)
+    {
+        if (result.Value is not null)
+            snapshot = result.Value;
+
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+        lastRead = result.HasValue ? $"{DateTimeOffset.Now:HH:mm:ss}" : "failed";
+    }
+
+    /// <summary>Every mutation answers with the whole list, so one call is enough.</summary>
+    void ApplyMutation(ApiResult<ItemMutationResult> result)
+    {
+        if (result.Value is not null)
+            snapshot = result.Value.Snapshot;
+
+        raw = result.Raw;
+        caption = $"{result.Status} {result.Reason} in {result.Milliseconds:0.0} ms";
+        lastRead = $"{DateTimeOffset.Now:HH:mm:ss}";
+    }
+
+    void BeginEdit(ItemRecord item)
+    {
+        editingId = item.Id;
+        editTitle = item.Title;
+        editNotes = item.Notes;
+        editStatus = item.Status;
+        pendingDeleteId = 0;
+        rowMessage = null;
+    }
+
+    void CancelEdit() => editingId = 0;
+
+    void AskDelete(ItemRecord item)
+    {
+        pendingDeleteId = item.Id;
+        editingId = 0;
+        rowMessage = null;
+    }
+
+    void CancelDelete() => pendingDeleteId = 0;
+
+    void OnKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && CanCreate)
+            _ = CreateAsync();
+    }
+
+    void LoadSampleAsync()
+    {
+        var examples = new[]
+        {
+            new { Title = "Read the D1 sample", Notes = "GET /api/items returns this row.", Status = "open" },
+            new { Title = "Edit it inline", Notes = "The update endpoint writes the row back.", Status = "in-progress" },
+            new { Title = "Delete it again", Notes = "DELETE keeps the table tidy.", Status = "done" }
+        };
+
+        var example = examples[Random.Shared.Next(examples.Length)];
+        newTitle = example.Title;
+        newNotes = example.Notes;
+        newStatus = example.Status;
+    }
+
+    static string StatusBadge(string status) => status switch
+    {
+        "open" => "badge-info",
+        "in-progress" => "badge-warn",
+        "done" => "badge-ok",
+        _ => "badge-neutral"
+    };
+}

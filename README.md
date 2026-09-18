@@ -1,4 +1,4 @@
-# Cloudflare Workers .NET
+# Cloudflare Workers .NET Sample
 
 Write your Cloudflare Worker in **C#**, ship it as JavaScript.
 
@@ -7,21 +7,15 @@ runtime on the edge. The worker is authored in plain C# (`net10.0`), compiled to
 `src/WorkersDotNet/dist/worker.js` at build time, and served by Wrangler. A **Blazor WebAssembly**
 frontend calls the worker's API and doubles as a live demo of every endpoint.
 
-```mermaid
-flowchart LR
-    A[Blazor WebAssembly app] -->|fetch, cross origin| B[Cloudflare Worker written in C#]
-    B --> C[ASSETS binding]
-    C --> D[Static Blazor files]
-    B --> E[Remote HTTP APIs]
-    B --> F[caches.default]
-    B --> G[KV namespace]
-    B --> H[R2 bucket]
-    B --> I[Queue]
-    I --> J[Queue consumer in the same worker]
-    J --> G
-    K[Cron trigger] --> G
-    A -.->|reads results back| G
-```
+It uses the **[Workers](https://github.com/iruizsalinas/workers)**  NuGet package.
+
+## 🌐 Live demo
+
+**[→ Open the live demo](https://cloudflare-workers-dotnet.mailpost.workers.dev/)** — a deployed
+instance of this project. The Blazor frontend runs against the real Cloudflare worker, so every
+sample (JSON, proxy, cache, KV, R2, queue, scheduled task, D1 CRUD and the weather sensor pipeline)
+is live and clickable.
+
 
 ## Highlights
 
@@ -33,98 +27,39 @@ flowchart LR
   one-liner, the main use case for an API worker.
 - **A dedicated CORS helper** — preflight and response headers handled in one place.
 - **Shared models** — the same `ApiResponse` record is used by the worker and the Blazor client.
-- **Every binding, worked through** — Cache API, KV, R2, queue producer *and* consumer, and an
-  hourly scheduled task, all runnable locally with no Cloudflare account.
+- **Every binding, worked through** — Cache API, KV, R2, D1, queue producer *and* consumer, a
+  Durable Object, and scheduled triggers, all runnable locally with no Cloudflare account.
+- **An end-to-end pipeline** — the weather sensor sample wires cron → D1 → queue → Durable Object →
+  external API → D1 back together, with a live diagram, readings table and job log in the UI.
 - **One-command local dev** — .NET Aspire starts the frontend and the worker together.
 - **Wrangler for deploy** — the standard Cloudflare workflow, unchanged.
 
-## Project layout
+## Prerequisites
 
-```
-src/
-  WorkersDotNet/            The Cloudflare Worker, written in C#
-    Worker.cs               Entry point: the [Fetch] handler
-    WorkerEvents.cs         The [Queue] consumer and the [Scheduled] cron handler
-    Router.cs               URL -> endpoint mapping (add new URLs here)
-    Results.cs              JSON response helpers
-    Cors.cs                 CORS policy helpers
-    Endpoints/              One class per route
-      JsonEndpoint.cs       GET  /api/json
-      ProxyEndpoint.cs      GET  /api/proxy
-      RedirectEndpoint.cs   GET  /api/redirect
-      PolicyEndpoint.cs     POST /api/policy
-      CacheEndpoint.cs      GET/POST /api/cache        (Cache API sample)
-      KvEndpoint.cs         GET/POST /api/kv           (KV sample)
-      R2Endpoint.cs         /api/r2, /api/r2/download, /api/r2/delete
-      QueueEndpoint.cs      GET/POST /api/queue        (queue producer + result)
-      ScheduledEndpoint.cs  GET/POST /api/scheduled    (cron sample)
-      AssetsEndpoint.cs     Fallback: serves the Blazor app via the ASSETS binding
-  BlazorWebApp/             Blazor WebAssembly frontend that calls the worker
-    Pages/                  One page per sample (see "Sample frontend")
-    Services/WorkerApi.cs   Typed wrapper around HttpClient: timing, headers, JSON
-    Shared/                 Layout, navigation and the small UI component library
-  Shared/Models.cs          Records shared by the worker and the frontend
-  Aspire/Aspire.AppHost/    Aspire host that orchestrates local development
-wrangler.toml               Deploy config, with the [build] step and all bindings
-wrangler.dev.toml           Local dev config, without the [build] step
-cloudflarebuild.sh          CI/deploy build: publishes Blazor assets, then the worker
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Node.js 20+](https://nodejs.org/) (for Wrangler)
+- `npm install` at the repo root, to restore Wrangler
+
+## Running locally
+
+```bash
+dotnet run --project src/Aspire/Aspire.AppHost
 ```
 
-## API
+This starts the Blazor frontend and the worker, and opens the Aspire dashboard where you can follow
+logs and endpoints for both.
 
-| Method | Path                 | Description                                                                       |
-| ------ | -------------------- | --------------------------------------------------------------------------------- |
-| `GET`  | `/api/json`          | Returns a JSON `ApiResponse` — the JSON helper in action                           |
-| `GET`  | `/api/proxy?url=`    | Fetches a remote URL server-side and tags the response with `x-proxied-by: Workers` |
-| `GET`  | `/api/redirect?to=`  | Redirects to the given URL; cross-origin `fetch` callers receive the target in `location`       |
-| `POST` | `/api/policy`        | Accepts a bounded JSON `ReadingInput` body and validates it                        |
-| `GET`  | `/api/cache?key=`    | Cache API: serve from `caches.default`, or build and store (see below)             |
-| `POST` | `/api/cache?key=`    | Cache API: purge the entry for that key                                            |
-| `GET`  | `/api/kv`            | KV: reads the three fixed sample keys                                              |
-| `POST` | `/api/kv`            | KV: writes up to 64 characters to one of the three fixed keys                      |
-| `GET`  | `/api/r2`            | R2: metadata of `sample_file.txt` in `dotnettest`                                  |
-| `POST` | `/api/r2`            | R2: uploads the raw request body (max 1 KB) as `sample_file.txt`, overwriting it   |
-| `GET`  | `/api/r2/download`   | R2: streams the object back with its metadata headers                              |
-| `POST` | `/api/r2/delete`     | R2: deletes the object                                                             |
-| `GET`  | `/api/queue`         | Queue: reads the latest result and history the consumer wrote to KV                |
-| `POST` | `/api/queue`         | Queue: puts a message of at most 16 characters on `dotnet-queue`                   |
-| `GET`  | `/api/scheduled`     | Scheduled task: reads the latest run and history                                   |
-| `POST` | `/api/scheduled`     | Scheduled task: runs the same code the cron trigger runs, on demand                |
-| `*`    | anything else        | Falls through to the `ASSETS` binding, serving the Blazor app                      |
+The D1 sample needs its schema once: `wrangler dev` creates an empty local database, but does not run
+`migrations/`. Apply it to the local copy before the first run (or whenever you change it):
 
-`OPTIONS` requests are answered by the CORS preflight helper for every path, but only advertised to
-origins on the allow-list (see [CORS](#cors)). Every sample response carries
-`cache-control: no-store` so the browser never hides a change behind its own HTTP cache.
+```bash
+npx wrangler d1 execute dotnet --local -c wrangler.dev.toml --file=migrations/0001_init.sql
+```
 
-## Bindings and samples
-
-Five samples show what a worker can reach beyond plain HTTP. All of them work locally: `wrangler
-dev` simulates the Cache API, KV, R2 and queues on this machine, so no Cloudflare account and no
-sign-in are involved. Local state lives in `.wrangler/state/v3/` and survives restarts — delete that
-folder to start from a clean slate.
-
-| Sample | Binding in `wrangler.toml` | Resource name | What it does |
-| ------ | -------------------------- | ------------- | ------------ |
-| Cache API | `[cache] enabled = true` | — | `GET /api/cache?key=` looks the URL up in `caches.default`, answers a hit straight from the cache, and on a miss builds the JSON, stores a copy with `cache-control: max-age=300` and returns a fresh copy. `POST` purges the entry. |
-| KV | `[[kv_namespaces]] binding = "KV"` | namespace `dotnet_test` | `POST /api/kv` writes at most 64 characters into one of the three fixed keys `sample_key_1`…`sample_key_3`; `GET /api/kv` reads all three back. |
-| R2 | `[[r2_buckets]] binding = "R2"` | bucket `dotnettest` | Upload a file of at most 1 KB; it is always stored as `sample_file.txt`, so a new upload overwrites the previous one. `GET /api/r2/download` streams it back, `POST /api/r2/delete` removes it. |
-| Queue (producer) | `[[queues.producers]] binding = "QUEUE"` | queue `dotnet-queue` | `POST /api/queue` puts a message of at most 16 characters on the queue together with the date it was queued. |
-| Queue (consumer) | `[[queues.consumers]]` | queue `dotnet-queue` | `WorkerEvents.ConsumeAsync` receives the batch and writes the text plus *both* dates — queued and processed — to the KV key `queue_result` (and to `queue_history`). |
-| Scheduled task | `[triggers] crons = ["0 * * * *"]` | — | `WorkerEvents.OnSchedule` runs every hour and writes the run to the KV key `scheduled_result` (and to `scheduled_history`). |
-
-Two details are worth calling out, because they are easy to get wrong:
-
-- **`[cache] enabled = true` is required locally.** Without it, `wrangler dev` answers
-  `caches.default.match()` with "nothing cached" and silently drops `caches.default.put()`, so the
-  cache sample could never show a hit. It is also why the stored copy carries `cache-control:
-  max-age=300` — the Cache API ignores a response marked `no-store`.
-- **The producer never talks to the consumer.** A worker has no memory between requests, so KV is
-  the hand-off: the consumer writes `queue_result`, and `GET /api/queue` reads it back. The Blazor
-  page polls that endpoint until the message it just sent shows up.
-
-`env.Queue("QUEUE")` carries a JSON body (`QueueJob`), and the queue name (`dotnet-queue`) lives in
-`SampleConfig` in `src/Shared/Models.cs` alongside the namespace name, bucket name, object key and
-all the length limits, so the worker and the frontend cannot drift apart.
+That writes the tables `items`, `sensors`, `readings` and `jobs` and seeds three sensors into
+`.wrangler/state/v3`, which is also where the local KV and R2 state lives. The script is idempotent,
+but `CREATE TABLE IF NOT EXISTS` cannot repair a table whose columns have changed since it was
+created — drop that table and re-run it if you hit `no such column`.
 
 ## Sample frontend
 
@@ -140,12 +75,58 @@ the response headers and the state it changed.
 | `/r2` | R2 bucket | File picker with a 1 KB check, upload, download (browser *and* fetch-and-inspect) and delete |
 | `/queue` | Queue | The producer form, and the consumer's result: text, queued at, processed at |
 | `/scheduled` | Scheduled task | The latest KV record, the run history, and a button that runs the task now |
+| `/d1` | D1 database | Full CRUD over the `items` table: create, inline-edit a row, two-step delete, and every mutation returns the fresh list |
+| `/telemetry` | Weather sensors | The whole pipeline: the six stages light up per state, readings with live/simulated badges, job attempts and the rate-gate lease |
+
+The sidebar groups the samples by theme (requests, storage, data), so the list stays readable as
+more samples are added.
 
 Every page shares the same building blocks from `src/BlazorWebApp/Shared/`
 (`PageHeader`, `SampleCard`, `ApiCallLog`, `RawView`, `Notice`, `WorkerStatus`), so the
 status code, reason phrase, duration and the interesting response header of each call are visible
 without opening the browser's developer tools. `WorkerApi` in `src/BlazorWebApp/Services/` performs
 every call, which is where the base URL, timing and JSON parsing live.
+
+## Bindings and API
+
+Every binding in `wrangler.toml` backs one sample, and each one also works locally, where
+`wrangler dev` simulates KV, R2, D1 and queues on this machine:
+
+| Binding | Resource | Used by |
+| ------- | -------- | ------- |
+| `KV` | KV namespace `dotnet_test` | The KV sample (keys `sample_key_1..3`, max 64 characters each), the queue consumer (key `queue_result`) and the scheduled task (key `scheduled_result`) |
+| `R2` | bucket `dotnettest` | The R2 sample: a single object `sample_file.txt`, overwritten by each upload, capped at 1 KB |
+| `QUEUE` | queue `dotnet-queue` | The producer/consumer sample (messages of max 16 characters) |
+| `DB` | D1 database `dotnet` | The CRUD sample (table `items`) and the telemetry pipeline (tables `sensors`, `readings`, `jobs`) |
+| `TELEMETRY` | queue `dotnet-telemetry` | The telemetry pipeline: the cron trigger enqueues a job per due sensor, the consumer processes them |
+| `RATE_GATE` | Durable Object `RateGate` | Hands out a single 30 second lease, so only one outbound weather API call is in flight |
+| `ASSETS` | `src/WorkersDotNet/dist/wwwroot` | Serves the published Blazor app, falling back to `index.html` for SPA routes |
+
+`[triggers] crons = ["0 * * * *", "*/5 * * * *"]` drives two handlers: the hourly scheduled-task
+sample, and the telemetry poll that enqueues the sensors whose `next_read_at` has passed.
+
+| Route | Method | Sample |
+| ----- | ------ | ------ |
+| `/api/json` | GET | JSON response |
+| `/api/proxy` | GET | Server-side `fetch` (the target is validated against an allow-list) |
+| `/api/redirect` | GET | Real 302 |
+| `/api/policy` | POST | JSON body validation, 400 with a request id on failure |
+| `/api/cache` | GET, POST | Cache API: read through the cache, POST purges the key |
+| `/api/kv` | GET, POST | Read all three fixed keys, write one of them |
+| `/api/r2` | GET, POST | Object metadata, upload (raw body, `content-type` is stored) |
+| `/api/r2/download` | GET | Stream the stored object back |
+| `/api/r2/delete` | POST | Delete the object |
+| `/api/queue` | GET, POST | Producer (POST) and the consumer's latest result plus history (GET) |
+| `/api/scheduled` | GET, POST | Run history (GET), run the task now (POST) |
+| `/api/items` | GET, POST | List the D1 rows, create one |
+| `/api/items/update` | POST | Update one row |
+| `/api/items/delete` | POST | Delete one row |
+| `/api/telemetry` | GET | Sensors, readings, jobs, pipeline stats and the rate-gate state |
+| `/api/telemetry/run` | POST | Enqueue a job for every due sensor (what the cron does) |
+| `/api/telemetry/reset` | POST | Mark every sensor active and due now, so a demo run has work to do |
+
+Mutations return the resulting **snapshot** (the fresh list plus the counts), so a page never has to
+follow a write with a read.
 
 ## Adding a URL
 
@@ -218,46 +199,6 @@ Pages or a custom domain. Spaces around entries are ignored.
 > Browsing the frontend as `127.0.0.1` instead of `localhost` produces a different origin. Add
 > `http://127.0.0.1:5217` to the list if you prefer that host name.
 
-## Prerequisites
-
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [Node.js 20+](https://nodejs.org/) (for Wrangler)
-- `npm install` at the repo root, to restore Wrangler
-
-## Running locally
-
-### With Aspire (recommended)
-
-```bash
-dotnet run --project src/Aspire/Aspire.AppHost
-```
-
-This starts the Blazor frontend and the worker, and opens the Aspire dashboard where you can follow
-logs and endpoints for both.
-
-### Without Aspire
-
-Run the worker on its own — this publishes the C# worker and then starts Wrangler on port `8787`:
-
-```bash
-npm run worker:dev
-```
-
-`worker:dev` passes `--test-scheduled`, which enables `GET /__scheduled?cron=0+*+*+*+*` so you can
-fire the cron handler by hand; the scheduled page links to it. Cron triggers also never fire on
-their own in local dev, which is why the page has a "Run now" button.
-
-Then run the frontend, which reads its API base URL from
-`src/BlazorWebApp/wwwroot/appsettings.Development.json` (`http://localhost:8787`):
-
-```bash
-dotnet run --project src/BlazorWebApp
-```
-
-The bindings listed in [Bindings and samples](#bindings-and-samples) all work here: KV, R2 and the
-queue are simulated on this machine, and the queue consumer runs in the same `wrangler dev`
-process. Their state is kept in `.wrangler/state/v3/` — delete that folder for a clean slate.
-
 ## Building
 
 Publish the worker on its own:
@@ -282,13 +223,22 @@ then publishes the worker. Wrangler serves that directory through the `ASSETS` b
 Deployment uses the standard Cloudflare workflow. `wrangler.toml` declares a `[build]` step that
 runs `cloudflarebuild.sh`, so Cloudflare builds the C# for you.
 
-The bindings have to exist first, and the KV namespace needs its real id in `wrangler.toml`
-(`id = "dotnet_test"` is the local placeholder):
+The bindings have to exist first. The KV namespace id is already in `wrangler.toml`; the rest are
+created with one command each:
 
 ```bash
 npx wrangler queues create dotnet-queue
+npx wrangler queues create dotnet-telemetry
 npx wrangler r2 bucket create dotnettest
 npx wrangler kv namespace create dotnet_test     # paste the printed id into [[kv_namespaces]]
+npx wrangler d1 create dotnet                    # paste the printed id into [[d1_databases]]
+```
+
+Then create the D1 schema in the deployed database — this is a separate step from deploying, and
+without it every D1 and telemetry call fails:
+
+```bash
+npx wrangler d1 execute dotnet --remote --file=migrations/0001_init.sql
 ```
 
 Then deploy:
@@ -296,6 +246,11 @@ Then deploy:
 ```bash
 npx wrangler deploy
 ```
+
+The Durable Object migration (`[[migrations]] tag = "v1"` in `wrangler.toml`) is applied by the same
+deploy, and the two cron triggers are registered with it. Trigger one on demand with
+`npx wrangler dev --test-scheduled` (locally) or by calling `POST /api/scheduled` /
+`POST /api/telemetry/run` through the deployed worker.
 
 ## Conventions and compiler notes
 
@@ -319,6 +274,12 @@ Practical consequences for this codebase:
   compiles to a literal, while a non-constant static field is a compile error (`WRK110`).
 - **Keep the router thin.** All logic lives in the endpoint classes, so the router stays a readable
   index of the worker's URLs.
+- **One queue and one scheduled handler per worker.** The compiler allows a single `[Queue]` and a
+  single `[Scheduled]` method, so `WorkerEvents.cs` reads `batch.Queue` / `scheduled.Cron` and
+  dispatches internally. That is why both crons and both queues live in one file.
+- **Durable Object methods are the RPC surface.** Every public method on `RateGate` becomes a public
+  method of the object, so the worker-side helpers are private and only `reserve`, `complete` and
+  `peek` are callable.
 - **`dist/` is generated.** It is gitignored; never edit it by hand.
 
 ## Credits

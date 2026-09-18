@@ -66,9 +66,49 @@ queue = "dotnet-queue"
 [[queues.consumers]]
 queue = "dotnet-queue"
 
-# Fires the scheduled sample every hour. Cron events do not fire on their own in
-# local dev; start with `wrangler dev --test-scheduled` to trigger one on demand
-# with GET /__scheduled, or use the "Run now" button in the Blazor UI, which
-# calls the exact same code through POST /api/scheduled.
+# D1 database "dotnet". It holds the tables of the CRUD sample (items) and of the
+# telemetry pipeline (sensors, readings, jobs); see migrations/0001_init.sql.
+# Locally wrangler keeps a SQLite copy of it under .wrangler/state/v3/d1, keyed by
+# database_id, so the same id is used here and in wrangler.toml and local writes
+# survive a restart. Apply the schema once with
+#   npx wrangler d1 execute dotnet --local --file=migrations/0001_init.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "dotnet"
+database_id = "39d2b30e-716f-4196-bb9e-70cb52d96628"
+migrations_dir = "migrations"
+
+# Queue "dotnet-telemetry": the telemetry pipeline's cron trigger sends sensor
+# jobs to it and the (single) queue consumer in WorkerEvents picks them up.
+# max_batch_size/max_batch_timeout match the reference pipeline: up to 10 messages
+# per invocation, and a partial batch is delivered after 5 seconds.
+[[queues.producers]]
+binding = "TELEMETRY"
+queue = "dotnet-telemetry"
+
+[[queues.consumers]]
+queue = "dotnet-telemetry"
+max_batch_size = 10
+max_batch_timeout = 5
+
+# Durable Object "RateGate": a single instance (addressed by name) that hands out
+# a 30 second lease, so only one outbound weather API call is in flight at a time.
+[[durable_objects.bindings]]
+name = "RATE_GATE"
+class_name = "RateGate"
+
+# Durable Object migrations. Locally wrangler applies this itself; on Cloudflare
+# it is applied when the worker is deployed.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateGate"]
+
+# Fires the scheduled handlers: the scheduled-task sample every hour, and the
+# telemetry pipeline every 5 minutes to poll the sensors that are due. Cron events
+# do not fire on their own in local dev; start with `wrangler dev
+# --test-scheduled` to trigger one on demand with
+# GET /__scheduled?cron=*/5+*+*+*+*, or use the buttons in the Blazor UI, which
+# call the exact same code through POST /api/scheduled and
+# POST /api/telemetry/run.
 [triggers]
-crons = ["0 * * * *"]
+crons = ["0 * * * *", "*/5 * * * *"]
