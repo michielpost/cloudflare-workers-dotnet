@@ -40,6 +40,20 @@ namespace WorkersDotNet
                     return await ItemsEndpoint.UpdateAsync(request, environment);
                 case "/api/items/delete":
                     return await ItemsEndpoint.DeleteAsync(request, environment);
+                case "/api/auth/register":
+                    return await AuthEndpoint.RegisterAsync(request, environment);
+                case "/api/auth/login":
+                    return await AuthEndpoint.LoginAsync(request, environment);
+                case "/api/auth/logout":
+                    return await AuthEndpoint.LogoutAsync(request, environment);
+                case "/api/auth/me":
+                    return await AuthEndpoint.MeAsync(request, environment);
+                case "/api/auth/profile":
+                    return await AuthEndpoint.UpdateProfileAsync(request, environment);
+                case "/api/auth/roles":
+                    return await AuthEndpoint.AssignRolesAsync(request, environment);
+                case "/api/auth/users":
+                    return await AuthEndpoint.UsersAsync(request, environment);
                 case "/api/telemetry":
                     return await TelemetryEndpoint.HandleAsync(request, environment);
                 case "/api/telemetry/run":

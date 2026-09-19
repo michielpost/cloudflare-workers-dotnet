@@ -1,0 +1,110 @@
+@page "/login"
+@inject AuthService Auth
+@inject NavigationManager Navigation
+
+<PageTitle>Sign in</PageTitle>
+
+<div class="stack auth-stack">
+    <PageHeader Title="Sign in"
+                Subtitle="Register a new account or sign in. Accounts live in the worker's D1 database; the first registration whose email matches the DEFAULT_ADMIN_EMAIL variable is made an admin automatically, and admins can then assign roles to anyone. You can set a display name later on your account page." />
+
+    <SampleCard Title="@(Mode == ModeKind.Login ? "Sign in" : "Create an account")">
+        <div class="btn-row">
+            <button class="btn @(Mode == ModeKind.Login ? "btn-primary" : "btn-ghost")" @onclick="() => Switch(ModeKind.Login)">Sign in</button>
+            <button class="btn @(Mode == ModeKind.Register ? "btn-primary" : "btn-ghost")" @onclick="() => Switch(ModeKind.Register)">Register</button>
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="auth-email">Email</label>
+            <input id="auth-email" type="email" maxlength="@SampleConfig.AuthMaxEmailLength"
+                   @bind="email" placeholder="you@example.com" />
+        </div>
+
+        @if (Mode == ModeKind.Register)
+        {
+
+        }
+
+        <div class="field">
+            <label class="field-label" for="auth-password">Password</label>
+            <input id="auth-password" type="password" @bind="password"
+                   placeholder="At least @SampleConfig.AuthMinPasswordLength characters"
+                   @onkeydown="OnKeyDown" />
+        </div>
+
+        @if (error is not null)
+        {
+            <Notice Kind="err" Message="@error" />
+        }
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="SubmitAsync" disabled="@Busy">
+                @if (Busy)
+                {
+                    <span class="spinner"></span>
+                }
+                @(Mode == ModeKind.Login ? "Sign in" : "Create account and sign in")
+            </button>
+        </div>
+    </SampleCard>
+</div>
+
+@code {
+    enum ModeKind { Login, Register }
+
+    ModeKind Mode = ModeKind.Login;
+
+    string email = "";
+    string password = "";
+    string? error;
+    bool Busy;
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    void Switch(ModeKind mode)
+    {
+        Mode = mode;
+        error = null;
+    }
+
+    async Task SubmitAsync()
+    {
+        if (Busy)
+            return;
+
+        Busy = true;
+        error = null;
+
+        try
+        {
+            AuthResult result = Mode == ModeKind.Login
+                ? await Auth.LoginAsync(email, password)
+                : await Auth.RegisterAsync(email, password);
+
+            if (result.Ok)
+            {
+                var target = string.IsNullOrEmpty(ReturnUrl) ? "/" : ReturnUrl;
+                Navigation.NavigateTo(target, forceLoad: false);
+            }
+            else
+            {
+                error = result.Error;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SubmitAsync();
+    }
+}

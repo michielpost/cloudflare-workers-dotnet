@@ -62,7 +62,7 @@ namespace WorkersDotNet
         {
             var response = Response.Empty(204)
                 .WithHeader("access-control-allow-methods", "GET, POST, OPTIONS")
-                .WithHeader("access-control-allow-headers", "content-type");
+                .WithHeader("access-control-allow-headers", "content-type, authorization");
 
             var allowed = AllowedOrigin(origin, environment);
             if (allowed is null)

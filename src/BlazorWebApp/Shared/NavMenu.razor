@@ -22,12 +22,42 @@
             }
         </div>
     }
+
+    <AuthorizeView Context="navAuth">
+        <Authorized>
+            <div class="nav-group">
+                <div class="nav-group-title">Account</div>
+                <NavLink class="nav-link" href="account" Match="NavLinkMatch.All" title="Your profile and sign out">
+                    <span class="nav-icon">👤</span>
+                    <span class="nav-label">@DisplayName(navAuth.User)</span>
+                </NavLink>
+                <AuthorizeView Roles="@SampleConfig.AuthAdminRole" Context="adminNav">
+                    <NavLink class="nav-link" href="admin" title="Assign roles to users">
+                        <span class="nav-icon">🛡️</span>
+                        <span class="nav-label">Admin</span>
+                    </NavLink>
+                </AuthorizeView>
+            </div>
+        </Authorized>
+        <NotAuthorized>
+            <div class="nav-group">
+                <div class="nav-group-title">Account</div>
+                <NavLink class="nav-link" href="login" Match="NavLinkMatch.All" title="Sign in or register">
+                    <span class="nav-icon">🔑</span>
+                    <span class="nav-label">Sign in</span>
+                </NavLink>
+            </div>
+        </NotAuthorized>
+    </AuthorizeView>
 </nav>
 
 @code {
     sealed record NavItem(string Href, string Label, string Icon, string Description, NavLinkMatch Match = NavLinkMatch.Prefix);
 
     sealed record NavGroup(string Title, IReadOnlyList<NavItem> Items);
+
+    static string DisplayName(System.Security.Claims.ClaimsPrincipal user)
+        => string.IsNullOrWhiteSpace(user.Identity?.Name) ? "Account" : user.Identity!.Name!;
 
     static readonly NavGroup[] Groups =
     [

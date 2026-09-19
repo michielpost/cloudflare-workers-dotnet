@@ -1,0 +1,184 @@
+@page "/admin"
+@attribute [Authorize(Roles = "admin")]
+@inject AuthService Auth
+
+<PageTitle>User administration</PageTitle>
+
+<div class="stack">
+    <PageHeader Title="User administration"
+                Subtitle="This page is only reachable with the admin role (the route is protected by an authorize attribute). Tick the roles any user should hold and save - the worker writes the changes to D1."
+                Tags="@(new[] { SampleConfig.AuthAdminRole, SampleConfig.AuthUsersTable, SampleConfig.AuthUserRolesTable, "D1" })" />
+
+    <SampleCard Title="Users and roles"
+                Description="Every row shows one account with a checkbox per assignable role. Saving sends the full role set for each changed user.">
+        @if (snapshot is null)
+        {
+            @if (Busy)
+            {
+                <p class="muted"><span class="spinner"></span> Loading users…</p>
+            }
+            else if (loadError is not null)
+            {
+                <Notice Kind="err" Message="@loadError" />
+            }
+            else
+            {
+                <p class="muted">Nothing loaded yet.</p>
+            }
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Display name</th>
+                            <th>Roles</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Rows)
+                        {
+                            <tr>
+                                <td>@row.Email</td>
+                                <td>@row.DisplayName</td>
+                                <td>
+                                    @foreach (var role in snapshot.Roles)
+                                    {
+                                        <label class="role-check">
+                                            <input type="checkbox" checked="@row.Selected.Contains(role)"
+                                                   @onchange="(e) => Toggle(row, role, (bool)e.Value!)" />
+                                            @role
+                                        </label>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="btn-row">
+                <button class="btn btn-primary" @onclick="SaveAsync" disabled="@(Busy || !Changed)">
+                    @if (Busy)
+                    {
+                        <span class="spinner"></span>
+                    }
+                    Save changes
+                </button>
+                <button class="btn" @onclick="LoadAsync" disabled="@Busy">Reload</button>
+            </div>
+
+            @if (message is not null)
+            {
+                <Notice Kind="@(messageOk ? "ok" : "warn")" Message="@message" />
+            }
+        }
+    </SampleCard>
+</div>
+
+@code {
+    sealed class Row
+    {
+        public string Email = "";
+        public string DisplayName = "";
+        public HashSet<string> Selected = [];
+        public HashSet<string> Saved = [];
+        public bool Changed => !Selected.SetEquals(Saved);
+    }
+
+    UsersSnapshot? snapshot;
+    List<Row> Rows = [];
+    bool Busy;
+    bool Changed;
+    string? loadError;
+    string? message;
+    bool messageOk;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        Busy = true;
+        loadError = null;
+        message = null;
+
+        try
+        {
+            var res = await Auth.GetUsersAsync();
+            if (res.Ok && res.Value is not null)
+            {
+                snapshot = res.Value;
+                Rows = snapshot.Users.Select(u => new Row
+                {
+                    Email = u.Email,
+                    DisplayName = u.DisplayName,
+                    Selected = [.. u.Roles],
+                    Saved = [.. u.Roles],
+                }).ToList();
+            }
+            else
+            {
+                loadError = res.Error ?? res.Reason ?? "Could not load users.";
+            }
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    void Toggle(Row row, string role, bool isChecked)
+    {
+        if (isChecked)
+            row.Selected.Add(role);
+        else
+            row.Selected.Remove(role);
+
+        Changed = Rows.Any(r => r.Changed);
+    }
+
+    async Task SaveAsync()
+    {
+        if (Busy)
+            return;
+
+        Busy = true;
+        message = null;
+
+        var changed = Rows.Where(r => r.Changed).ToList();
+        var saved = 0;
+        var failed = 0;
+
+        try
+        {
+            foreach (var row in changed)
+            {
+                var res = await Auth.AssignRolesAsync(row.Email, row.Selected.ToList());
+                if (res.Ok)
+                {
+                    row.Saved = [.. row.Selected];
+                    saved++;
+                }
+                else
+                {
+                    failed++;
+                }
+            }
+
+            messageOk = failed == 0;
+            message = failed == 0
+                ? $"Saved roles for {saved} user{(saved == 1 ? "" : "s")}."
+                : $"Saved {saved}, failed {failed} user{(failed == 1 ? "" : "s")}. Check the email addresses.";
+            Changed = Rows.Any(r => r.Changed);
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+}

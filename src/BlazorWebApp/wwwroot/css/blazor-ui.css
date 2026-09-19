@@ -1029,6 +1029,70 @@ input[type=file] {
     font-size: 1rem;
 }
 
+/* ------------------------------------------------------------------ *
+ * Auth (login / account / admin)
+ * ------------------------------------------------------------------ */
+input[type=email],
+input[type=password] {
+    width: 100%;
+    padding: .55rem .7rem;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: .88rem;
+    color: var(--text);
+    background: #0f1424;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    outline: none;
+}
+
+input[type=email]:focus,
+input[type=password]:focus {
+    border-color: rgba(246, 130, 31, .65);
+    box-shadow: 0 0 0 3px rgba(246, 130, 31, .16);
+}
+
+.auth-stack {
+    max-width: 34rem;
+}
+
+.role-check {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    margin-right: .9rem;
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.role-check input {
+    accent-color: var(--accent, #f6821f);
+    cursor: pointer;
+}
+
+.account-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .32rem .7rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: .82rem;
+    color: var(--text);
+    background: var(--panel-2);
+    text-decoration: none;
+    white-space: nowrap;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.account-chip:hover {
+    border-color: rgba(246, 130, 31, .55);
+}
+
 .overview-desc {
     color: var(--text-dim);
     font-size: .87rem;

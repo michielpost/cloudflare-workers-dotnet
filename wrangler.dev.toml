@@ -31,6 +31,12 @@ not_found_handling = "single-page-application"
 [vars]
 ALLOWED_ORIGINS = "http://localhost:5217,https://localhost:7000"
 
+# The email that is automatically promoted to the "admin" role the first time an
+# account with this address registers (see /api/auth/register). Set it to the
+# email you want to be the default administrator, or leave blank to disable the
+# auto-promotion.
+DEFAULT_ADMIN_EMAIL = "admin@example.com"
+
 # Enables the Cache API in local development. Without this `wrangler dev`
 # answers caches.default.match() with "nothing cached" and silently drops
 # caches.default.put(), so the cache sample could never show a hit locally.

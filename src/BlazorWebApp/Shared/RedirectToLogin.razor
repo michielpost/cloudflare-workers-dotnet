@@ -1,0 +1,37 @@
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthState
+
+@* Shown by AuthorizeRouteView when a page is not accessible: a signed-out
+   visitor is sent to /login (remembering where they were going), while a signed
+   in user who lacks the required role sees an access-denied message instead. *@
+
+@if (SignedIn)
+{
+    <PageTitle>Access denied</PageTitle>
+    <div class="stack">
+        <PageHeader Title="Access denied"
+                    Subtitle="Your account is signed in, but it does not have the role required to view this page." />
+        <a href="/" class="btn btn-primary" style="width:max-content">Back to the overview</a>
+    </div>
+}
+else
+{
+    <PageTitle>Signing in…</PageTitle>
+    <p class="muted">You need to sign in to view this page.</p>
+}
+
+@code {
+    bool SignedIn;
+
+    protected override void OnInitialized()
+    {
+        var state = AuthState.GetAuthenticationStateAsync().GetAwaiter().GetResult();
+        SignedIn = state.User.Identity?.IsAuthenticated == true;
+
+        if (!SignedIn)
+        {
+            var returnUrl = Uri.EscapeDataString(Navigation.ToAbsoluteUri(Navigation.Uri).PathAndQuery);
+            Navigation.NavigateTo($"/login?returnUrl={returnUrl}", forceLoad: false);
+        }
+    }
+}

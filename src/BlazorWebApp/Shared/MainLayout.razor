@@ -31,6 +31,14 @@
                 <span class="crumb-page">@PageName</span>
             </div>
             <div class="topbar-right">
+                <AuthorizeView Context="topAuth">
+                    <Authorized>
+                        <a class="account-chip" href="account" title="My account">👤 @topAuth.User.Identity!.Name</a>
+                    </Authorized>
+                    <NotAuthorized>
+                        <a class="account-chip" href="login" title="Sign in or register">Sign in</a>
+                    </NotAuthorized>
+                </AuthorizeView>
                 <WorkerStatus />
             </div>
         </header>

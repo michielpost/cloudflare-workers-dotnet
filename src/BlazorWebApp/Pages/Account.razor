@@ -1,0 +1,167 @@
+@page "/account"
+@inject AuthService Auth
+@inject NavigationManager Navigation
+
+<PageTitle>My account</PageTitle>
+
+<AuthorizeView Context="auth">
+    <Authorized>
+        <div class="stack">
+            <PageHeader Title="My account"
+                        Subtitle="Your identity comes from the worker's /api/auth/me call, which reads your session token and looks your roles up in D1." />
+
+            <SampleCard Title="Profile">
+                <div class="kpi-row">
+                    <div class="kpi">
+                        <div class="kpi-label">email</div>
+                        <div class="kpi-value">@auth.User.FindFirst(ClaimTypes.Email)?.Value</div>
+                    </div>
+                    <div class="kpi">
+                        <div class="kpi-label">display name</div>
+                        <div class="kpi-value">@auth.User.Identity!.Name</div>
+                    </div>
+                    <div class="kpi">
+                        <div class="kpi-label">roles</div>
+                        <div class="kpi-value">@RolesOf(auth.User)</div>
+                    </div>
+                </div>
+
+                <div class="btn-row" style="margin-top:1rem">
+                    <button class="btn btn-primary" @onclick="LogoutAsync" disabled="@Busy">
+                        @if (Busy)
+                        {
+                            <span class="spinner"></span>
+                        }
+                        Sign out
+                    </button>
+                </div>
+
+                @if (message is not null)
+                {
+                    <Notice Kind="ok" Message="@message" />
+                }
+            </SampleCard>
+
+            <SampleCard Title="Edit profile">
+                <p class="muted" style="margin-top:0">
+                    Your display name is only what you tell us - you can change it here at any time.
+                </p>
+                <div class="field">
+                    <label class="field-label" for="profile-name">Display name</label>
+                    <input id="profile-name" type="text" maxlength="@SampleConfig.AuthMaxDisplayNameLength"
+                           @bind="newName" placeholder="How you'll appear to others" />
+                </div>
+
+                @if (nameMessage is not null)
+                {
+                    <Notice Kind="ok" Message="@nameMessage" />
+                }
+                @if (nameError is not null)
+                {
+                    <Notice Kind="err" Message="@nameError" />
+                }
+
+                <div class="btn-row" style="margin-top:1rem">
+                    <button class="btn btn-primary" @onclick="SaveNameAsync" disabled="@SavingName">
+                        @if (SavingName)
+                        {
+                            <span class="spinner"></span>
+                        }
+                        Save name
+                    </button>
+                </div>
+            </SampleCard>
+
+            <AuthorizeView Roles="@SampleConfig.AuthAdminRole">
+                <SampleCard Title="Admin tools">
+                    <p class="muted" style="margin-top:0">
+                        You hold the <code>@SampleConfig.AuthAdminRole</code> role, so you can assign roles to
+                        other accounts.
+                    </p>
+                    <a class="btn btn-primary" href="/admin">Manage users and roles</a>
+                </SampleCard>
+            </AuthorizeView>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <div class="stack">
+            <PageHeader Title="Not signed in"
+                        Subtitle="You need an account to see a profile. Create one or sign in to continue." />
+            <a class="btn btn-primary" href="/login" style="width:max-content">Sign in or register</a>
+        </div>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    [Inject] WorkerAuthStateProvider AuthState { get; set; } = default!;
+
+    bool Busy;
+    string? message;
+
+    string newName = "";
+    string? nameMessage;
+    string? nameError;
+    bool SavingName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        newName = state.User.Identity?.Name ?? "";
+    }
+
+    static string RolesOf(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray();
+        return roles.Length == 0 ? "none" : string.Join(", ", roles);
+    }
+
+    async Task LogoutAsync()
+    {
+        if (Busy)
+            return;
+
+        Busy = true;
+        message = null;
+
+        try
+        {
+            await Auth.LogoutAsync();
+            message = "You are now signed out.";
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    async Task SaveNameAsync()
+    {
+        if (SavingName)
+            return;
+
+        SavingName = true;
+        nameMessage = null;
+        nameError = null;
+
+        try
+        {
+            var res = await Auth.UpdateProfileAsync(newName);
+            if (res.Ok)
+            {
+                nameMessage = "Display name updated.";
+            }
+            else
+            {
+                nameError = res.Error ?? res.Reason ?? "Could not update the display name.";
+            }
+        }
+        catch (Exception ex)
+        {
+            nameError = ex.Message;
+        }
+        finally
+        {
+            SavingName = false;
+        }
+    }
+}
