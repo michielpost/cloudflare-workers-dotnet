@@ -1,35 +1,23 @@
 using System.Text.RegularExpressions;
 using Shared;
 using Workers;
+using WorkersDotNet.Services;
 
 namespace WorkersDotNet
 {
     /// <summary>
-    /// Sample: an R2 bucket (<c>env.R2("R2")</c>) holding a single object.
+    /// Sample: an R2 bucket (<c>env.R2("R2")</c>) holding a single object. Thin
+    /// controller: reads the request (method, body stream, headers) and maps the
+    /// <see cref="R2SampleService"/> result to a response.
     /// </summary>
-    /// <remarks>
-    /// Uploads are capped at <see cref="MaxBytes"/> bytes and are always stored
-    /// under <see cref="ObjectKey"/>, so a new upload overwrites the previous
-    /// file. GET returns the metadata of the stored object, GET
-    /// <c>/api/r2/download</c> streams the file back and POST
-    /// <c>/api/r2/delete</c> removes it. Locally the object lives in the
-    /// wrangler R2 simulator under <c>.wrangler/state/v3/r2</c>.
-    /// </remarks>
     public static class R2Endpoint
     {
-        const int MaxBytes = SampleConfig.R2MaxBytes;
-        const string Binding = "R2";
-        const string BucketName = SampleConfig.R2BucketName;
-        const string ObjectKey = SampleConfig.R2ObjectKey;
-
         public static async Task<Response> HandleAsync(Request request, Env environment)
         {
-            var bucket = environment.R2(Binding);
-
             if (request.Method == "POST")
-                return await UploadAsync(request, bucket);
+                return await UploadAsync(request, environment.R2("R2"));
 
-            var info = await DescribeAsync(bucket);
+            var info = await R2SampleService.DescribeAsync(environment.R2("R2"));
             return Response.Json(info, 200)
                 .WithHeader("cache-control", "no-store");
         }
@@ -37,42 +25,41 @@ namespace WorkersDotNet
         /// <summary>Streams the stored object back to the client.</summary>
         public static async Task<Response> DownloadAsync(Request request, Env environment)
         {
-            var bucket = environment.R2(Binding);
-            var item = await bucket.GetObjectAsync(ObjectKey);
+            var item = await R2SampleService.GetObjectAsync(environment.R2("R2"));
 
             if (item is null)
-                return Results.Error($"{ObjectKey} has not been uploaded yet.", 404);
+                return Results.Error($"{R2SampleService.ObjectName} has not been uploaded yet.", 404);
 
             var headers = new Headers();
             item.WriteHttpMetadata(headers);
-            headers.Set("content-disposition", $"attachment; filename=\"{ObjectKey}\"");
+            headers.Set("content-disposition", $"attachment; filename=\"{R2SampleService.ObjectName}\"");
             headers.Set("cache-control", "no-store");
 
             return Response.FromStream(item.Body, headers)
                 .WithHeader("etag", item.HttpEtag)
-                .WithHeader("x-r2-bucket", BucketName)
+                .WithHeader("x-r2-bucket", SampleConfig.R2BucketName)
                 .WithHeader("x-r2-key", item.Key);
         }
 
         public static async Task<Response> DeleteAsync(Request request, Env environment)
         {
-            var bucket = environment.R2(Binding);
-            await bucket.DeleteAsync(ObjectKey);
+            var r2 = environment.R2("R2");
+            await R2SampleService.DeleteAsync(r2);
 
-            var info = await DescribeAsync(bucket);
+            var info = await R2SampleService.DescribeAsync(r2);
             return Response.Json(
-                    new R2MutationResult(true, $"Deleted {ObjectKey} from {BucketName}.", info),
+                    new R2MutationResult(true, $"Deleted {R2SampleService.ObjectName} from {SampleConfig.R2BucketName}.", info),
                     200)
                 .WithHeader("cache-control", "no-store");
         }
 
-        static async Task<Response> UploadAsync(Request request, IR2Bucket bucket)
+        static async Task<Response> UploadAsync(Request request, IR2Bucket r2)
         {
             // Content-Length is only a pre-check: the size of the stored object
-            // is verified below, because the header cannot be trusted.
+            // is verified in the service, because the header cannot be trusted.
             var declared = request.Headers.Get("content-length");
-            if (declared is not null && Regex.IsMatch(declared, "^[0-9]{1,9}$") && int.Parse(declared) > MaxBytes)
-                return Results.Error($"The upload is {declared} bytes, the limit is {MaxBytes} bytes.", 413);
+            if (declared is not null && Regex.IsMatch(declared, "^[0-9]{1,9}$") && int.Parse(declared) > SampleConfig.R2MaxBytes)
+                return Results.Error($"The upload is {declared} bytes, the limit is {SampleConfig.R2MaxBytes} bytes.", 413);
 
             var body = request.BodyStream();
             if (body is null)
@@ -82,51 +69,12 @@ namespace WorkersDotNet
             if (contentType is null || contentType.Length == 0)
                 contentType = "application/octet-stream";
 
-            var stored = await bucket.PutObjectAsync(
-                ObjectKey,
-                body,
-                new R2PutOptions { HttpMetadata = new R2HttpMetadata(ContentType: contentType) });
+            var result = await R2SampleService.UploadAsync(r2, body, contentType);
+            if (result.Error is not null)
+                return Results.Error(result.Error, result.Status);
 
-            if (stored is null)
-                return Results.Error("The upload could not be stored in R2.", 500);
-
-            if (stored.Size > MaxBytes)
-            {
-                await bucket.DeleteAsync(ObjectKey);
-                return Results.Error($"The upload is {stored.Size} bytes, the limit is {MaxBytes} bytes.", 413);
-            }
-
-            return Response.Json(
-                    new R2MutationResult(true, $"Stored {stored.Size} bytes as {stored.Key}.", InfoOf(stored)),
-                    200)
+            return Response.Json(result.Result, 200)
                 .WithHeader("cache-control", "no-store");
-        }
-
-        /// <summary>Metadata of the stored object, or an empty description when nothing is stored.</summary>
-        static async Task<R2FileInfo> DescribeAsync(IR2Bucket bucket)
-        {
-            var item = await bucket.HeadAsync(ObjectKey);
-            return InfoOf(item);
-        }
-
-        static R2FileInfo InfoOf(R2Object? item)
-        {
-            if (item is null)
-                return new R2FileInfo(false, ObjectKey, BucketName, 0, MaxBytes, "", "", "");
-
-            var contentType = "";
-            if (item.HttpMetadata is not null && item.HttpMetadata.ContentType is not null)
-                contentType = item.HttpMetadata.ContentType;
-
-            return new R2FileInfo(
-                true,
-                item.Key,
-                BucketName,
-                item.Size,
-                MaxBytes,
-                contentType,
-                item.Uploaded.ToString("O"),
-                item.HttpEtag);
         }
     }
 }

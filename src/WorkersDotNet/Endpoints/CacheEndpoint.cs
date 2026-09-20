@@ -19,13 +19,12 @@ namespace WorkersDotNet
     {
         public static async Task<Response> HandleAsync(Request request, Context context)
         {
-            var cache = CacheStorage.Default;
             var cacheKey = request.Url.ToString();
 
             if (request.Method == "POST")
-                return await PurgeAsync(cache, cacheKey);
+                return await PurgeAsync(cacheKey);
 
-            var cached = await cache.MatchAsync(cacheKey);
+            var cached = await CacheStorage.Default.MatchAsync(cacheKey);
             if (cached is not null)
             {
                 return cached
@@ -52,7 +51,7 @@ namespace WorkersDotNet
 
             // Writing to the cache must finish even though the response is
             // returned right away, so hand the task to the runtime.
-            context.WaitUntil(cache.PutAsync(cacheKey, stored));
+            context.WaitUntil(CacheStorage.Default.PutAsync(cacheKey, stored));
 
             // The client response uses "no-store" so the browser never serves its
             // own copy; every click then really reaches the worker and the
@@ -64,9 +63,9 @@ namespace WorkersDotNet
                 .WithHeader("cache-control", "no-store");
         }
 
-        static async Task<Response> PurgeAsync(ICache cache, string cacheKey)
+        static async Task<Response> PurgeAsync(string cacheKey)
         {
-            var deleted = await cache.DeleteAsync(cacheKey);
+            var deleted = await CacheStorage.Default.DeleteAsync(cacheKey);
 
             var message = deleted
                 ? "Cache entry deleted. The next GET is a cache miss."
