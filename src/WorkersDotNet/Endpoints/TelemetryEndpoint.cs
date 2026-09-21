@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 using WorkersDotNet.Services;
@@ -11,18 +13,25 @@ namespace WorkersDotNet
     /// and maps the <see cref="TelemetryService"/> result to a response. All the
     /// pipeline logic lives in <see cref="TelemetryService"/>.
     /// </summary>
-    public static class TelemetryEndpoint
+    public sealed class TelemetryEndpoint
     {
+        private readonly TelemetryService _telemetry;
+
+        public TelemetryEndpoint(TelemetryService telemetry)
+        {
+            _telemetry = telemetry;
+        }
+
         /// <summary>GET returns the pipeline state, POST runs the cron work now.</summary>
-        public static async Task<Response> HandleAsync(Request request, Env environment)
+        public async Task<Response> HandleAsync(Request request)
         {
             if (request.Method == "POST")
-                return await RunAsync(environment);
+                return await RunAsync();
 
             if (request.Method != "GET")
                 return Results.Error("Only GET and POST are supported on /api/telemetry", 405);
 
-            return Response.Json(await ReadStatusAsync(environment), 200)
+            return Response.Json(await _telemetry.ReadStatusAsync(), 200)
                 .WithHeader("cache-control", "no-store");
         }
 
@@ -31,12 +40,10 @@ namespace WorkersDotNet
         /// with the state of the pipeline. Local development has no cron
         /// scheduler, so the UI calls this to start a run by hand.
         /// </summary>
-        public static async Task<Response> RunAsync(Env environment)
+        public async Task<Response> RunAsync()
         {
-            var sensorIds = await TelemetryService.EnqueueDueAsync(
-                environment.D1("DB"),
-                environment.Queue("TELEMETRY"));
-            var status = await ReadStatusAsync(environment);
+            var sensorIds = await _telemetry.EnqueueDueAsync();
+            var status = await _telemetry.ReadStatusAsync();
 
             var message = sensorIds.Count == 0
                 ? $"No sensor is due right now. The cron trigger {SampleConfig.TelemetryCron} queues them every 5 minutes."
@@ -52,22 +59,15 @@ namespace WorkersDotNet
         /// sensor pushes its next due time minutes into the future, so the demo
         /// presses this to get work for the next run without waiting.
         /// </summary>
-        public static async Task<Response> ResetAsync(Env environment)
+        public async Task<Response> ResetAsync()
         {
-            await TelemetryService.ResetAsync(environment.D1("DB"));
-            var status = await ReadStatusAsync(environment);
+            await _telemetry.ResetAsync();
+            var status = await _telemetry.ReadStatusAsync();
             var message = $"{status.Stats.Sensors} sensor(s) set to active and due now.";
 
             var result = new TelemetryRunResult(true, message, 0, new List<string>(), status);
             return Response.Json(result, 200)
                 .WithHeader("cache-control", "no-store");
-        }
-
-        static async Task<TelemetryStatus> ReadStatusAsync(Env environment)
-        {
-            return await TelemetryService.ReadStatusAsync(
-                environment.D1("DB"),
-                environment.DurableObject("RATE_GATE"));
         }
     }
 }

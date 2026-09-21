@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 
@@ -7,34 +9,43 @@ namespace WorkersDotNet.Services
     /// The telemetry pipeline's business logic: queuing due sensors, consuming
     /// jobs (rate-gated weather calls), recording jobs and readings in D1, and
     /// reading the whole pipeline state for the UI. The endpoint stays a thin
-    /// controller; each method takes the binding it needs. Generic operations
-    /// (D1 queries, queue send, the Durable Object) call the SDK directly.
+    /// controller; the D1, queue and Durable Object bindings are injected.
     /// </summary>
-    public static class TelemetryService
+    public sealed class TelemetryService
     {
-        const string LiveSource = "live";
-        const string SimulatedSource = "simulated";
+        readonly string LiveSource = "live";
+        readonly string SimulatedSource = "simulated";
 
         /// <summary>The name of the RateGate Durable Object this pipeline uses.</summary>
-        public const string GateName = "outbound-api";
+        readonly string GateName = "outbound-api";
 
-        const int BatchSize = SampleConfig.TelemetryBatchSize;
-        const int ReadingLimit = SampleConfig.TelemetryReadingLimit;
-        const int JobLimit = 10;
-        const int TimeoutSeconds = SampleConfig.TelemetryFetchTimeoutSeconds;
+        readonly int BatchSize = SampleConfig.TelemetryBatchSize;
+        readonly int ReadingLimit = SampleConfig.TelemetryReadingLimit;
+        readonly int JobLimit = 10;
+        readonly int TimeoutSeconds = SampleConfig.TelemetryFetchTimeoutSeconds;
+
+        private readonly D1Database _db;
+        private readonly IQueueProducer _queue;
+        private readonly IDurableObjectNamespace _gateNs;
+
+        public TelemetryService(D1Database db, IQueueProducer queue, IDurableObjectNamespace gateNs)
+        {
+            _db = db;
+            _queue = queue;
+            _gateNs = gateNs;
+        }
 
         /// <summary>
         /// Queues one job for every sensor that is due. This is the whole of the
         /// cron trigger's work, which is why the trigger and the button share it.
         /// </summary>
-        public static async Task<List<string>> EnqueueDueAsync(ID1Database db, IQueueProducer queue)
+        public async Task<List<string>> EnqueueDueAsync()
         {
             var now = DateTimeOffset.UtcNow;
 
-            var due = await AllDueAsync(
-                db,
-                $"SELECT sensor_id AS sensorId, interval_minutes AS intervalMinutes FROM sensors WHERE active = 1 AND next_read_at <= ? ORDER BY next_read_at LIMIT {BatchSize}",
-                now.ToUnixTimeMilliseconds());
+            var due = await _db.AllAsync<DueSensor>(
+                _db.Prepare($"SELECT sensor_id AS sensorId, interval_minutes AS intervalMinutes FROM sensors WHERE active = 1 AND next_read_at <= ? ORDER BY next_read_at LIMIT {BatchSize}")
+                    .Bind(now.ToUnixTimeMilliseconds()));
 
             var sensorIds = new List<string>();
             var messages = new List<QueuedMessage>();
@@ -43,21 +54,20 @@ namespace WorkersDotNet.Services
             {
                 var jobId = Guid.NewGuid().ToString();
 
-                await db.Prepare(
-                    "INSERT OR REPLACE INTO jobs (id, sensor_id, status, attempts, last_error, queued_at, processed_at) VALUES (?, ?, ?, 0, '', ?, 0)")
-                    .Bind(jobId, sensor.SensorId, "queued", now.ToUnixTimeMilliseconds())
-                    .RunAsync();
+                await _db.ExecuteAsync(
+                    _db.Prepare("INSERT OR REPLACE INTO jobs (id, sensor_id, status, attempts, last_error, queued_at, processed_at) VALUES (?, ?, ?, 0, '', ?, 0)")
+                        .Bind(jobId, sensor.SensorId, "queued", now.ToUnixTimeMilliseconds()));
 
-                await db.Prepare("UPDATE sensors SET next_read_at = ? WHERE sensor_id = ?")
-                    .Bind(now.AddSeconds(sensor.IntervalMinutes * 60).ToUnixTimeMilliseconds(), sensor.SensorId)
-                    .RunAsync();
+                await _db.ExecuteAsync(
+                    _db.Prepare("UPDATE sensors SET next_read_at = ? WHERE sensor_id = ?")
+                        .Bind(now.AddSeconds(sensor.IntervalMinutes * 60).ToUnixTimeMilliseconds(), sensor.SensorId));
 
                 messages.Add(new QueuedMessage(sensor.SensorId, "", jobId, now.ToUnixTimeMilliseconds()));
                 sensorIds.Add(sensor.SensorId);
             }
 
             if (messages.Count != 0)
-                await queue.SendJsonBatchAsync(messages);
+                await _queue.SendJsonBatchAsync(messages);
 
             Console.WriteLine($"Telemetry: queued {messages.Count} sensor job(s)");
             return sensorIds;
@@ -68,9 +78,9 @@ namespace WorkersDotNet.Services
         /// weather API with a timeout, store the reading and release the lease.
         /// Throwing hands the message back to the queue for a retry.
         /// </summary>
-        public static async Task ProcessJobAsync(ID1Database db, IDurableObjectNamespace gateNs, QueuedMessage message, int attempts)
+        public async Task ProcessJobAsync(QueuedMessage message, int attempts)
         {
-            var lease = await gateNs.GetByName(GateName)
+            var lease = await _gateNs.GetByName(GateName)
                 .InvokeAsync<Lease>("reserve", new List<object> { message.JobId });
             if (lease is null || !lease.Allowed)
             {
@@ -78,7 +88,8 @@ namespace WorkersDotNet.Services
                 throw new InvalidOperationException($"the rate gate is held by job {owner}");
             }
 
-            var location = await FirstLocationAsync(db, message.Text);
+            var location = await _db.FirstAsync<SensorLocation>(
+                _db.Prepare("SELECT latitude, longitude FROM sensors WHERE sensor_id = ?").Bind(message.Text));
 
             var latitude = location is null ? 0.0 : location.Latitude;
             var longitude = location is null ? 0.0 : location.Longitude;
@@ -131,60 +142,56 @@ namespace WorkersDotNet.Services
 
             var processedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            await db.Prepare(
-                "INSERT OR REPLACE INTO readings (id, sensor_id, temperature, air_quality, condition, source, reading_at, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-                .Bind(message.JobId, message.Text, temperature, airQuality, condition, source, readingAt, processedAt)
-                .RunAsync();
+            await _db.ExecuteAsync(
+                _db.Prepare("INSERT OR REPLACE INTO readings (id, sensor_id, temperature, air_quality, condition, source, reading_at, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                    .Bind(message.JobId, message.Text, temperature, airQuality, condition, source, readingAt, processedAt));
 
-            await MarkJobAsync(db, message.JobId, "done", attempts, "");
+            await MarkJobAsync(message.JobId, "done", attempts, "");
 
-            await gateNs.GetByName(GateName)
+            await _gateNs.GetByName(GateName)
                 .InvokeVoidAsync("complete", new List<object> { lease.Token });
 
             Console.WriteLine($"Telemetry: sensor {message.Text} stored a {source} reading ({condition})");
         }
 
         /// <summary>Records how a job ended, so the UI can show its state.</summary>
-        public static async Task MarkJobAsync(ID1Database db, string jobId, string status, int attempts, string error)
+        public async Task MarkJobAsync(string jobId, string status, int attempts, string error)
         {
-            await db.Prepare("UPDATE jobs SET status = ?, attempts = ?, last_error = ?, processed_at = ? WHERE id = ?")
-                .Bind(status, attempts, error, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), jobId)
-                .RunAsync();
+            await _db.ExecuteAsync(
+                _db.Prepare("UPDATE jobs SET status = ?, attempts = ?, last_error = ?, processed_at = ? WHERE id = ?")
+                    .Bind(status, attempts, error, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), jobId));
         }
 
         /// <summary>Makes every sensor due again (POST /api/telemetry/reset).</summary>
-        public static async Task ResetAsync(ID1Database db)
+        public async Task ResetAsync()
         {
-            await db.Prepare("UPDATE sensors SET active = 1, next_read_at = 0").RunAsync();
+            await _db.ExecuteAsync(_db.Prepare("UPDATE sensors SET active = 1, next_read_at = 0"));
         }
 
         /// <summary>Everything GET /api/telemetry returns.</summary>
-        public static async Task<TelemetryStatus> ReadStatusAsync(ID1Database db, IDurableObjectNamespace gateNs)
+        public async Task<TelemetryStatus> ReadStatusAsync()
         {
-            var sensors = await AllSensorsAsync(
-                db,
-                "SELECT s.sensor_id AS sensorId, s.name, s.latitude, s.longitude, s.interval_minutes AS intervalMinutes, s.next_read_at AS nextReadAtMs, s.active,"
+            var sensors = await _db.AllAsync<SensorInfo>(
+                _db.Prepare("SELECT s.sensor_id AS sensorId, s.name, s.latitude, s.longitude, s.interval_minutes AS intervalMinutes, s.next_read_at AS nextReadAtMs, s.active,"
                 + " (SELECT COUNT(*) FROM readings r WHERE r.sensor_id = s.sensor_id) AS reads,"
                 + " (SELECT COUNT(*) FROM jobs j WHERE j.sensor_id = s.sensor_id AND j.status <> 'done' AND j.status <> 'failed') AS pending"
-                + " FROM sensors s ORDER BY s.sensor_id");
+                + " FROM sensors s ORDER BY s.sensor_id"));
 
-            var readings = await AllReadingsAsync(
-                db,
-                $"SELECT id, sensor_id AS sensorId, temperature, air_quality AS airQuality, condition, source, reading_at AS readingAtMs, processed_at AS processedAtMs FROM readings ORDER BY reading_at DESC, id LIMIT {ReadingLimit}");
+            var readings = await _db.AllAsync<ReadingInfo>(
+                _db.Prepare($"SELECT id, sensor_id AS sensorId, temperature, air_quality AS airQuality, condition, source, reading_at AS readingAtMs, processed_at AS processedAtMs FROM readings ORDER BY reading_at DESC, id LIMIT {ReadingLimit}"));
 
-            var jobs = await AllJobsAsync(
-                db,
-                $"SELECT id, sensor_id AS sensorId, status, attempts, last_error AS lastError, queued_at AS queuedAtMs, processed_at AS processedAtMs FROM jobs ORDER BY queued_at DESC LIMIT {JobLimit}");
+            var jobs = await _db.AllAsync<JobInfo>(
+                _db.Prepare($"SELECT id, sensor_id AS sensorId, status, attempts, last_error AS lastError, queued_at AS queuedAtMs, processed_at AS processedAtMs FROM jobs ORDER BY queued_at DESC LIMIT {JobLimit}"));
 
             var stats = new PipelineStats(
                 sensors.Count,
-                await CountAsync(db, "SELECT COUNT(*) AS value FROM readings"),
-                await CountAsync(db, "SELECT COUNT(*) AS value FROM jobs WHERE status = 'queued' OR status = 'retrying'"),
-                await CountAsync(db, "SELECT COUNT(*) AS value FROM jobs WHERE status = 'done'"),
-                await CountAsync(db, "SELECT COUNT(*) AS value FROM jobs WHERE status = 'failed'"),
-                await CountAsync(db, "SELECT COALESCE(SUM(attempts), 0) AS value FROM jobs"));
+                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM readings")),
+                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM jobs WHERE status = 'queued' OR status = 'retrying'")),
+                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM jobs WHERE status = 'done'")),
+                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM jobs WHERE status = 'failed'")),
+                await _db.CountAsync(_db.Prepare("SELECT COALESCE(SUM(attempts), 0) AS value FROM jobs")));
 
-            var gate = await ReadGateAsync(gateNs);
+            var gate = await ReadGateAsync();
 
             return new TelemetryStatus(
                 sensors,
@@ -201,11 +208,11 @@ namespace WorkersDotNet.Services
         }
 
         /// <summary>Asks the Durable Object for its lease. Never fails the read.</summary>
-        public static async Task<GateInfo> ReadGateAsync(IDurableObjectNamespace gateNs)
+        public async Task<GateInfo> ReadGateAsync()
         {
             try
             {
-                var lease = await gateNs.GetByName(GateName).InvokeAsync<Lease>("peek", new List<object>());
+                var lease = await _gateNs.GetByName(GateName).InvokeAsync<Lease>("peek", new List<object>());
 
                 if (lease is null || !lease.Allowed)
                     return new GateInfo(false, "", SampleConfig.TelemetryRateLimitSeconds, 0);
@@ -216,74 +223,6 @@ namespace WorkersDotNet.Services
             {
                 Console.Error.WriteLine($"Could not read the rate gate ({exception.Message})");
                 return new GateInfo(false, "", SampleConfig.TelemetryRateLimitSeconds, 0);
-            }
-        }
-
-        static async Task<int> CountAsync(ID1Database db, string sql)
-        {
-            var row = await db.Prepare(sql).FirstAsync<CountRow>();
-            return row is null ? 0 : row.Value;
-        }
-
-        static async Task<List<DueSensor>> AllDueAsync(ID1Database db, string sql, long nowMs)
-        {
-            var result = await db.Prepare(sql).Bind(nowMs).AllAsync<DueSensor>();
-            var list = new List<DueSensor>();
-            if (result is not null && result.Results is not null)
-            {
-                foreach (var row in result.Results)
-                    list.Add(row);
-            }
-            return list;
-        }
-
-        static async Task<List<SensorInfo>> AllSensorsAsync(ID1Database db, string sql)
-        {
-            var result = await db.Prepare(sql).AllAsync<SensorInfo>();
-            var list = new List<SensorInfo>();
-            if (result is not null && result.Results is not null)
-            {
-                foreach (var row in result.Results)
-                    list.Add(row);
-            }
-            return list;
-        }
-
-        static async Task<List<ReadingInfo>> AllReadingsAsync(ID1Database db, string sql)
-        {
-            var result = await db.Prepare(sql).AllAsync<ReadingInfo>();
-            var list = new List<ReadingInfo>();
-            if (result is not null && result.Results is not null)
-            {
-                foreach (var row in result.Results)
-                    list.Add(row);
-            }
-            return list;
-        }
-
-        static async Task<List<JobInfo>> AllJobsAsync(ID1Database db, string sql)
-        {
-            var result = await db.Prepare(sql).AllAsync<JobInfo>();
-            var list = new List<JobInfo>();
-            if (result is not null && result.Results is not null)
-            {
-                foreach (var row in result.Results)
-                    list.Add(row);
-            }
-            return list;
-        }
-
-        static async Task<SensorLocation?> FirstLocationAsync(ID1Database db, string sensorId)
-        {
-            try
-            {
-                return await db.Prepare("SELECT latitude, longitude FROM sensors WHERE sensor_id = ?")
-                    .Bind(sensorId)
-                    .FirstAsync<SensorLocation>();
-            }
-            catch (Exception)
-            {
-                return null;
             }
         }
 

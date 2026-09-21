@@ -1,109 +1,101 @@
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Shared;
 using Workers;
+using WorkersDotNet.Services;
 
 namespace WorkersDotNet.Auth
 {
     /// <summary>
     /// All D1 access for the auth feature: accounts, roles, the user-role mapping
-    /// and the session tokens. This is the auth-specific business logic; every
-    /// method takes the D1 binding it needs and calls the SDK directly (the
-    /// worker transpiler does not support user-defined instance methods). The SQL
-    /// matches migrations/0002_auth.sql. Token expiry is stored as unix
-    /// milliseconds so it can be compared without parsing a timestamp string.
+    /// and the session tokens. This is the auth-specific business logic; the D1
+    /// binding is injected and the SQL is centralised here. The SQL matches
+    /// migrations/0002_auth.sql. Token expiry is stored as unix milliseconds so
+    /// it can be compared without parsing a timestamp string.
     /// </summary>
-    public static class AuthService
+    /// <summary>One row of the users table (columns aliased to the property names).</summary>
+    public sealed record UserRow(long Id, string Email, string DisplayName, string PasswordHash, string CreatedAt, string UpdatedAt);
+
+    /// <summary>One row of the auth_tokens table.</summary>
+    public sealed record TokenRow(string TokenHash, long UserId, string CreatedAt, long ExpiresAt);
+
+    /// <summary>One row of the roles table.</summary>
+    public sealed record RoleRow(long Id, string Name);
+
+    /// <summary>A single name column, used when reading a list of role names.</summary>
+    public sealed record NameRow(string Name);
+
+    /// <summary>A user without the password, for the admin user list.</summary>
+    public sealed record AdminUserRow(long Id, string Email, string DisplayName);
+
+    public sealed class AuthService
     {
-        /// <summary>One row of the users table (columns aliased to the property names).</summary>
-        public sealed record UserRow(long Id, string Email, string DisplayName, string PasswordHash, string CreatedAt, string UpdatedAt);
-
-        /// <summary>One row of the auth_tokens table.</summary>
-        public sealed record TokenRow(string TokenHash, long UserId, string CreatedAt, long ExpiresAt);
-
-        /// <summary>One row of the roles table.</summary>
-        public sealed record RoleRow(long Id, string Name);
-
-        /// <summary>A single name column, used when reading a list of role names.</summary>
-        public sealed record NameRow(string Name);
-
-        /// <summary>A user without the password, for the admin user list.</summary>
-        public sealed record AdminUserRow(long Id, string Email, string DisplayName);
-
-        const string UserColumns =
+        readonly string UserColumns =
             "id, email, display_name AS displayName, " +
             "password_hash AS passwordHash, created_at AS createdAt, updated_at AS updatedAt";
 
-        public static async Task<UserRow?> FindUserByEmailAsync(ID1Database db, string email)
+        private readonly D1Database _db;
+        private readonly string _defaultAdminEmail;
+
+        public AuthService(D1Database db, string defaultAdminEmail)
         {
-            try
-            {
-                return await db.Prepare($"SELECT {UserColumns} FROM users WHERE email = ?")
-                    .Bind(email)
-                    .FirstAsync<UserRow>();
-            }
-            catch (Exception)
-            {
-                return null;
-            }
+            _db = db;
+            _defaultAdminEmail = defaultAdminEmail;
         }
 
-        public static async Task<UserRow?> FindUserByIdAsync(ID1Database db, long id)
+        public async Task<UserRow?> FindUserByEmailAsync(string email)
         {
-            try
-            {
-                return await db.Prepare($"SELECT {UserColumns} FROM users WHERE id = ?")
-                    .Bind(id)
-                    .FirstAsync<UserRow>();
-            }
-            catch (Exception)
-            {
-                return null;
-            }
+            return await _db.FirstAsync<UserRow>(
+                _db.Prepare($"SELECT {UserColumns} FROM users WHERE email = ?").Bind(email));
+        }
+
+        public async Task<UserRow?> FindUserByIdAsync(long id)
+        {
+            return await _db.FirstAsync<UserRow>(
+                _db.Prepare($"SELECT {UserColumns} FROM users WHERE id = ?").Bind(id));
         }
 
         /// <summary>
         /// Inserts a user and reads the row back so the caller has its id. Returns
         /// null if the insert raced a duplicate email (the UNIQUE constraint fails).
         /// </summary>
-        public static async Task<UserRow?> CreateUserAsync(ID1Database db, string email, string displayName, string passwordHash)
+        public async Task<UserRow?> CreateUserAsync(string email, string displayName, string passwordHash)
         {
             var now = DateTimeOffset.UtcNow.ToString("O");
 
-            var result = await db.Prepare(
-                "INSERT INTO users (email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-                .Bind(email, displayName, passwordHash, now, now)
-                .RunAsync();
+            var ok = await _db.ExecuteSucceededAsync(
+                _db.Prepare("INSERT INTO users (email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+                    .Bind(email, displayName, passwordHash, now, now));
 
-            if (result is null || !result.Success)
+            if (!ok)
                 return null;
 
-            return await db.Prepare($"SELECT {UserColumns} FROM users ORDER BY id DESC LIMIT 1")
-                .FirstAsync<UserRow>();
+            return await _db.FirstAsync<UserRow>(
+                _db.Prepare($"SELECT {UserColumns} FROM users ORDER BY id DESC LIMIT 1"));
         }
 
-        public static async Task UpdateDisplayNameAsync(ID1Database db, long userId, string displayName)
+        public async Task UpdateDisplayNameAsync(long userId, string displayName)
         {
             var now = DateTimeOffset.UtcNow.ToString("O");
-            await db.Prepare("UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?")
-                .Bind(displayName, now, userId)
-                .RunAsync();
+            await _db.ExecuteAsync(
+                _db.Prepare("UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?")
+                    .Bind(displayName, now, userId));
         }
 
-        public static async Task<List<string>> GetRolesAsync(ID1Database db, long userId)
+        public async Task<List<string>> GetRolesAsync(long userId)
         {
-            var result = await db.Prepare(
-                "SELECT r.name FROM roles r " +
+            var rows = await _db.AllAsync<NameRow>(
+                _db.Prepare("SELECT r.name FROM roles r " +
                 "INNER JOIN user_roles ur ON ur.role_id = r.id " +
-                "WHERE ur.user_id = ? ORDER BY r.id")
-                .Bind(userId)
-                .AllAsync<NameRow>();
+                "WHERE ur.user_id = ? ORDER BY r.id").Bind(userId));
+            return Names(rows);
+        }
 
+        static List<string> Names(IReadOnlyList<NameRow> rows)
+        {
             var list = new List<string>();
-            if (result is not null && result.Results is not null)
-            {
-                foreach (var row in result.Results)
-                    list.Add(row.Name);
-            }
-
+            foreach (var row in rows)
+                list.Add(row.Name);
             return list;
         }
 
@@ -112,37 +104,28 @@ namespace WorkersDotNet.Auth
         /// skipped because the INSERT...SELECT only inserts rows whose role
         /// actually exists.
         /// </summary>
-        public static async Task AssignRolesAsync(ID1Database db, long userId, IReadOnlyList<string> roles)
+        public async Task AssignRolesAsync(long userId, IReadOnlyList<string> roles)
         {
-            await db.Prepare("DELETE FROM user_roles WHERE user_id = ?").Bind(userId).RunAsync();
+            await _db.ExecuteAsync(_db.Prepare("DELETE FROM user_roles WHERE user_id = ?").Bind(userId));
 
             foreach (var role in roles)
             {
-                await db.Prepare(
-                    "INSERT OR IGNORE INTO user_roles (user_id, role_id) SELECT ?, id FROM roles WHERE name = ?")
-                    .Bind(userId, role)
-                    .RunAsync();
+                await _db.ExecuteAsync(
+                    _db.Prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id) SELECT ?, id FROM roles WHERE name = ?")
+                        .Bind(userId, role));
             }
         }
 
-        public static async Task<bool> RoleExistsAsync(ID1Database db, string name)
+        public async Task<bool> RoleExistsAsync(string name)
         {
-            try
-            {
-                var row = await db.Prepare("SELECT id, name FROM roles WHERE name = ?")
-                    .Bind(name)
-                    .FirstAsync<RoleRow>();
-                return row is not null;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
+            var row = await _db.FirstAsync<RoleRow>(
+                _db.Prepare("SELECT id, name FROM roles WHERE name = ?").Bind(name));
+            return row is not null;
         }
 
-        public static async Task<bool> IsAdminAsync(ID1Database db, long userId)
+        public async Task<bool> IsAdminAsync(long userId)
         {
-            var roles = await GetRolesAsync(db, userId);
+            var roles = await GetRolesAsync(userId);
             foreach (var role in roles)
             {
                 if (role == SampleConfig.AuthAdminRole)
@@ -152,49 +135,38 @@ namespace WorkersDotNet.Auth
             return false;
         }
 
-        public static async Task<List<string>> GetAllRolesAsync(ID1Database db)
+        public async Task<List<string>> GetAllRolesAsync()
         {
-            var result = await db.Prepare("SELECT name FROM roles ORDER BY id").AllAsync<NameRow>();
-
-            var list = new List<string>();
-            if (result is not null && result.Results is not null)
-            {
-                foreach (var row in result.Results)
-                    list.Add(row.Name);
-            }
-
-            return list;
+            var result = await _db.AllAsync<NameRow>(_db.Prepare("SELECT name FROM roles ORDER BY id"));
+            return Names(result);
         }
 
-        public static async Task<List<AdminUser>> GetAllUsersAsync(ID1Database db)
+        public async Task<List<AdminUser>> GetAllUsersAsync()
         {
-            var result = await db.Prepare("SELECT id, email, display_name AS displayName FROM users ORDER BY email")
-                .AllAsync<AdminUserRow>();
+            var rows = await _db.AllAsync<AdminUserRow>(
+                _db.Prepare("SELECT id, email, display_name AS displayName FROM users ORDER BY email"));
 
             var users = new List<AdminUser>();
-            if (result is not null && result.Results is not null)
+            foreach (var row in rows)
             {
-                foreach (var row in result.Results)
-                {
-                    var roles = await GetRolesAsync(db, row.Id);
-                    users.Add(new AdminUser(row.Id, row.Email, row.DisplayName, roles));
-                }
+                var roles = await GetRolesAsync(row.Id);
+                users.Add(new AdminUser(row.Id, row.Email, row.DisplayName, roles));
             }
 
             return users;
         }
 
         /// <summary>Creates a session token and stores its hash; returns the raw bearer token.</summary>
-        public static async Task<string> CreateTokenAsync(ID1Database db, long userId)
+        public async Task<string> CreateTokenAsync(long userId)
         {
             var raw = Hex.Encode(Crypto.RandomBytes(32));
             var hash = await HashTokenAsync(raw);
             var now = DateTimeOffset.UtcNow.ToString("O");
             var expiresAt = DateTimeOffset.UtcNow.AddSeconds(SampleConfig.AuthTokenLifetimeHours * 3600.0).ToUnixTimeMilliseconds();
 
-            await db.Prepare("INSERT INTO auth_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-                .Bind(hash, userId, now, expiresAt)
-                .RunAsync();
+            await _db.ExecuteAsync(
+                _db.Prepare("INSERT INTO auth_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
+                    .Bind(hash, userId, now, expiresAt));
 
             return raw;
         }
@@ -206,25 +178,16 @@ namespace WorkersDotNet.Auth
         /// expiry extended (sliding session), so an active user is never logged
         /// out while they keep using the app.
         /// </summary>
-        public static async Task<UserRow?> FindUserByTokenAsync(ID1Database db, string rawToken)
+        public async Task<UserRow?> FindUserByTokenAsync(string rawToken)
         {
             if (rawToken is null || rawToken.Length == 0)
                 return null;
 
             var hash = await HashTokenAsync(rawToken);
 
-            TokenRow? token;
-            try
-            {
-                token = await db.Prepare(
-                    "SELECT token_hash AS tokenHash, user_id AS userId, created_at AS createdAt, expires_at AS expiresAt FROM auth_tokens WHERE token_hash = ?")
-                    .Bind(hash)
-                    .FirstAsync<TokenRow>();
-            }
-            catch (Exception)
-            {
-                return null;
-            }
+            var token = await _db.FirstAsync<TokenRow>(
+                _db.Prepare("SELECT token_hash AS tokenHash, user_id AS userId, created_at AS createdAt, expires_at AS expiresAt FROM auth_tokens WHERE token_hash = ?")
+                    .Bind(hash));
 
             if (token is null)
                 return null;
@@ -233,48 +196,44 @@ namespace WorkersDotNet.Auth
 
             if (token.ExpiresAt <= nowMs)
             {
-                await db.Prepare("DELETE FROM auth_tokens WHERE token_hash = ?").Bind(hash).RunAsync();
+                await _db.ExecuteAsync(_db.Prepare("DELETE FROM auth_tokens WHERE token_hash = ?").Bind(hash));
                 return null;
             }
 
             // Sliding refresh: when a valid token is about to expire (within the
             // next day) it is rolled forward by a full lifetime again, so an
-            // active user is never logged out. This uses only method calls and a
-            // plain long comparison - the worker transpiler rejects cast and
-            // arithmetic (+/-) expressions.
+            // active user is never logged out.
             var refreshThreshold = DateTimeOffset.UtcNow.AddSeconds(24 * 3600.0).ToUnixTimeMilliseconds();
             if (token.ExpiresAt < refreshThreshold)
             {
                 var refreshedExpiry = DateTimeOffset.UtcNow
                     .AddSeconds(SampleConfig.AuthTokenLifetimeHours * 3600.0)
                     .ToUnixTimeMilliseconds();
-                await db.Prepare("UPDATE auth_tokens SET expires_at = ? WHERE token_hash = ?")
-                    .Bind(refreshedExpiry, hash)
-                    .RunAsync();
+                await _db.ExecuteAsync(_db.Prepare("UPDATE auth_tokens SET expires_at = ? WHERE token_hash = ?").Bind(refreshedExpiry, hash));
             }
 
-            return await FindUserByIdAsync(db, token.UserId);
+            return await FindUserByIdAsync(token.UserId);
         }
 
-        public static async Task DeleteTokenAsync(ID1Database db, string rawToken)
+        public async Task DeleteTokenAsync(string rawToken)
         {
             if (rawToken is null || rawToken.Length == 0)
                 return;
 
             var hash = await HashTokenAsync(rawToken);
-            await db.Prepare("DELETE FROM auth_tokens WHERE token_hash = ?").Bind(hash).RunAsync();
+            await _db.ExecuteAsync(_db.Prepare("DELETE FROM auth_tokens WHERE token_hash = ?").Bind(hash));
         }
 
-        public static async Task<AuthUser> ToAuthUserAsync(ID1Database db, UserRow user)
+        public async Task<AuthUser> ToAuthUserAsync(UserRow user)
         {
-            var roles = await GetRolesAsync(db, user.Id);
+            var roles = await GetRolesAsync(user.Id);
             return new AuthUser(user.Id, user.Email, user.DisplayName, roles);
         }
 
         /// <summary>True when the email matches the configured default admin.</summary>
-        public static bool IsDefaultAdmin(string defaultAdminEmail, string email)
+        public bool IsDefaultAdmin(string email)
         {
-            var configured = defaultAdminEmail;
+            var configured = _defaultAdminEmail;
             if (configured is null || configured.Length == 0)
                 return false;
 

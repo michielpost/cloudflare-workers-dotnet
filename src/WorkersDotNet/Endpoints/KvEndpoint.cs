@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 using WorkersDotNet.Services;
@@ -9,21 +10,26 @@ namespace WorkersDotNet
     /// <c>dotnet_test</c>). Thin controller: reads the request and maps the
     /// <see cref="KvSampleService"/> result to a response.
     /// </summary>
-    public static class KvEndpoint
+    public sealed class KvEndpoint
     {
-        public static async Task<Response> HandleAsync(Request request, Env environment)
+        private readonly KvSampleService _kv;
+
+        public KvEndpoint(KvSampleService kv)
         {
-            var kv = environment.Kv("KV");
+            _kv = kv;
+        }
 
+        public async Task<Response> HandleAsync(Request request)
+        {
             if (request.Method == "POST")
-                return await WriteAsync(request, kv);
+                return await WriteAsync(request);
 
-            var snapshot = await KvSampleService.ReadAsync(kv);
+            var snapshot = await _kv.ReadAsync();
             return Response.Json(snapshot, 200)
                 .WithHeader("cache-control", "no-store");
         }
 
-        static async Task<Response> WriteAsync(Request request, IKvNamespace kv)
+        async Task<Response> WriteAsync(Request request)
         {
             KvWriteRequest? input;
             try
@@ -35,7 +41,10 @@ namespace WorkersDotNet
                 return Results.Error("Malformed JSON body", 400);
             }
 
-            var result = await KvSampleService.WriteAsync(kv, input);
+            if (input is null)
+                return Results.Error("A JSON body with \"key\" and \"value\" is required", 400);
+
+            var result = await _kv.WriteAsync(input);
             if (result.Error is not null)
                 return Results.Error(result.Error, result.Status);
 

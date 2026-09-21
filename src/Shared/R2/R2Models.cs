@@ -6,7 +6,7 @@ public sealed record R2FileInfo(
     string Key,
     string Bucket,
     ulong Size,
-    int MaxBytes,
+    ulong MaxBytes,
     string ContentType,
     string UploadedAtUtc,
     string Etag);

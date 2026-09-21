@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 using WorkersDotNet.Services;
@@ -13,22 +15,29 @@ namespace WorkersDotNet
     /// and maps the <see cref="ItemsService"/> result to a response. All the
     /// business logic lives in <see cref="ItemsService"/>.
     /// </remarks>
-    public static class ItemsEndpoint
+    public sealed class ItemsEndpoint
     {
-        public static async Task<Response> HandleAsync(Request request, Env environment)
+        private readonly ItemsService _items;
+
+        public ItemsEndpoint(ItemsService items)
+        {
+            _items = items;
+        }
+
+        public async Task<Response> HandleAsync(Request request)
         {
             if (request.Method == "POST")
-                return await CreateAsync(request, environment);
+                return await CreateAsync(request);
 
             if (request.Method != "GET")
                 return Results.Error("Only GET and POST are supported on /api/items", 405);
 
-            return Response.Json(await ItemsService.ReadSnapshotAsync(environment.D1("DB")), 200)
+            return Response.Json(await _items.ReadSnapshotAsync(), 200)
                 .WithHeader("cache-control", "no-store");
         }
 
         /// <summary>POST /api/items/update edits one existing item.</summary>
-        public static async Task<Response> UpdateAsync(Request request, Env environment)
+        public async Task<Response> UpdateAsync(Request request)
         {
             if (request.Method != "POST")
                 return Results.Error("Only POST is supported on /api/items/update", 405);
@@ -46,11 +55,11 @@ namespace WorkersDotNet
             if (input is null || input.Id <= 0)
                 return Results.Error("A JSON body with a positive \"id\" is required", 400);
 
-            return ToResponse(await ItemsService.UpdateAsync(environment.D1("DB"), input));
+            return ToResponse(await _items.UpdateAsync(input));
         }
 
         /// <summary>POST /api/items/delete removes one existing item.</summary>
-        public static async Task<Response> DeleteAsync(Request request, Env environment)
+        public async Task<Response> DeleteAsync(Request request)
         {
             if (request.Method != "POST")
                 return Results.Error("Only POST is supported on /api/items/delete", 405);
@@ -68,10 +77,10 @@ namespace WorkersDotNet
             if (input is null || input.Id <= 0)
                 return Results.Error("A JSON body with a positive \"id\" is required", 400);
 
-            return ToResponse(await ItemsService.DeleteAsync(environment.D1("DB"), input));
+            return ToResponse(await _items.DeleteAsync(input));
         }
 
-        static async Task<Response> CreateAsync(Request request, Env environment)
+        async Task<Response> CreateAsync(Request request)
         {
             ItemCreateRequest? input;
             try
@@ -86,10 +95,10 @@ namespace WorkersDotNet
             if (input is null)
                 return Results.Error("A JSON body with \"title\" is required", 400);
 
-            return ToResponse(await ItemsService.CreateAsync(environment.D1("DB"), input));
+            return ToResponse(await _items.CreateAsync(input));
         }
 
-        static Response ToResponse(ItemsService.Outcome outcome)
+        static Response ToResponse(ItemsOutcome outcome)
         {
             if (outcome.Error is not null)
                 return Results.Error(outcome.Error, outcome.Status);

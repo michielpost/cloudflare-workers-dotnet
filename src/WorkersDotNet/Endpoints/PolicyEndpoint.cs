@@ -1,13 +1,14 @@
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 
 namespace WorkersDotNet
 {
-    public static class PolicyEndpoint
+    public sealed class PolicyEndpoint
     {
-        private const int MaxBodyBytes = 4096;
+        readonly int MaxBodyBytes = 4096;
 
-        public static async Task<Response> HandleAsync(Request request)
+        public async Task<Response> HandleAsync(Request request)
         {
             if (request.Method != "POST")
                 return Results.Error("Method not allowed", 405).WithHeader("allow", "POST");
@@ -31,7 +32,7 @@ namespace WorkersDotNet
             return Results.Ok("Reading accepted", request.Path);
         }
 
-        private static bool HasJsonBody(Request request)
+        private bool HasJsonBody(Request request)
         {
             var contentType = request.Headers.Get("content-type");
             var contentLength = request.Headers.Get("content-length");
@@ -52,7 +53,7 @@ namespace WorkersDotNet
         /// <c>^[1-9][0-9]{0,3}$</c> without regular expressions, which the
         /// Workers compiler does not support).
         /// </summary>
-        private static bool IsValidContentLength(string s)
+        private bool IsValidContentLength(string s)
         {
             if (s.Length == 0 || s.Length > 4)
                 return false;
@@ -66,7 +67,7 @@ namespace WorkersDotNet
             return true;
         }
 
-        private static bool IsValid(ReadingInput? input)
+        private bool IsValid(ReadingInput? input)
         {
             if (input is null || input.DeviceId.Length == 0)
                 return false;

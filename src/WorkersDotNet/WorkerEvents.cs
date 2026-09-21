@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 using WorkersDotNet.Services;
@@ -30,15 +31,16 @@ namespace WorkersDotNet
             Env environment,
             Context context)
         {
+            var app = new AppServices(environment);
+
             Console.WriteLine($"Queue consumer received {batch.Count} message(s) from {batch.Queue}");
 
             if (batch.Queue == SampleConfig.TelemetryQueueName)
             {
-                await ConsumeTelemetryAsync(batch, environment);
+                await ConsumeTelemetryAsync(batch, app);
                 return;
             }
 
-            var kv = environment.Kv("KV");
             foreach (var message in batch)
             {
                 var record = new QueueRecord(
@@ -47,7 +49,7 @@ namespace WorkersDotNet
                     DateTimeOffset.UtcNow.ToString("O"),
                     message.Id);
 
-                await QueueSampleService.WriteQueueResultAsync(kv, record);
+                await app.QueueSample.WriteQueueResultAsync(record);
                 message.Ack();
 
                 Console.WriteLine($"Queue consumer stored \"{record.Text}\" ({record.MessageId})");
@@ -60,17 +62,15 @@ namespace WorkersDotNet
         /// is only acked once it either succeeded or ran out of attempts. One bad
         /// sensor therefore never blocks the rest of the batch.
         /// </summary>
-        static async Task ConsumeTelemetryAsync(QueueMessageBatch<QueuedMessage> batch, Env environment)
+        static async Task ConsumeTelemetryAsync(QueueMessageBatch<QueuedMessage> batch, AppServices app)
         {
-            var db = environment.D1("DB");
-            var gateNs = environment.DurableObject("RATE_GATE");
             foreach (var message in batch)
             {
                 var attempts = message.Attempts;
 
                 try
                 {
-                    await TelemetryService.ProcessJobAsync(db, gateNs, message.Body, attempts);
+                    await app.TelemetryService.ProcessJobAsync(message.Body, attempts);
                     message.Ack();
                 }
                 catch (Exception exception)
@@ -82,13 +82,13 @@ namespace WorkersDotNet
                     if (attempts < SampleConfig.TelemetryMaxAttempts)
                     {
                         Console.Error.WriteLine($"Telemetry job {message.Body.JobId} failed on attempt {attempts}, retrying in {delay}s: {exception.Message}");
-                        await TelemetryService.MarkJobAsync(db, message.Body.JobId, "retrying", attempts, exception.Message);
+                        await app.TelemetryService.MarkJobAsync(message.Body.JobId, "retrying", attempts, exception.Message);
                         message.Retry(new QueueRetryOptions { DelaySeconds = delay });
                     }
                     else
                     {
                         Console.Error.WriteLine($"Telemetry job {message.Body.JobId} failed {attempts} times and is given up: {exception.Message}");
-                        await TelemetryService.MarkJobAsync(db, message.Body.JobId, "failed", attempts, exception.Message);
+                        await app.TelemetryService.MarkJobAsync(message.Body.JobId, "failed", attempts, exception.Message);
                         message.Ack();
                     }
                 }
@@ -103,19 +103,18 @@ namespace WorkersDotNet
         [Scheduled]
         public static void OnSchedule(ScheduledEvent scheduled, Env environment, Context context)
         {
+            var app = new AppServices(environment);
+
             Console.WriteLine($"Scheduled task {scheduled.Cron} fired for {scheduled.ScheduledTime:O}");
 
             if (scheduled.Cron == SampleConfig.TelemetryCron)
             {
-                context.WaitUntil(TelemetryService.EnqueueDueAsync(
-                    environment.D1("DB"),
-                    environment.Queue("TELEMETRY")));
+                context.WaitUntil(app.TelemetryService.EnqueueDueAsync());
                 return;
             }
 
             context.WaitUntil(
-                ScheduledSampleService.WriteRunAsync(
-                    environment.Kv("KV"),
+                app.ScheduledSample.WriteRunAsync(
                     scheduled.Cron,
                     scheduled.ScheduledTime.ToString("O"),
                     false));

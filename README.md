@@ -133,18 +133,28 @@ follow a write with a read.
 
 Adding an endpoint takes two small steps.
 
-**1. Create the endpoint** in `src/WorkersDotNet/Endpoints/`:
+**1. Create the endpoint** in `src/WorkersDotNet/Endpoints/`. Endpoints are
+plain instance classes; they receive the services they need through their
+constructor:
 
 ```csharp
+using System.Threading.Tasks;
 using Workers;
 
 namespace WorkersDotNet
 {
-    public static class HelloEndpoint
+    public sealed class HelloEndpoint
     {
-        public static Task<Response> HandleAsync(Request request)
+        private readonly GreetingService _greeting;
+
+        public HelloEndpoint(GreetingService greeting)
         {
-            return Task.FromResult(Results.Ok("Hello!", request.Path));
+            _greeting = greeting;
+        }
+
+        public Task<Response> HandleAsync(Request request)
+        {
+            return Task.FromResult(Results.Ok(_greeting.Message(), request.Path));
         }
     }
 }
@@ -154,7 +164,16 @@ namespace WorkersDotNet
 
 ```csharp
 case "/api/hello":
-    return await HelloEndpoint.HandleAsync(request);
+    return await _app.Hello.HandleAsync(request);
+```
+
+**3. Wire it up** in `AppServices.cs`, the composition root. It reads the
+environment's bindings once, builds every service, and injects them into the
+endpoints:
+
+```csharp
+var hello = new HelloEndpoint(new GreetingService());
+Hello = hello;
 ```
 
 That is all, the route is now live, CORS headers included for allowed origins.
@@ -253,22 +272,40 @@ deploy, and the two cron triggers are registered with it. Trigger one on demand 
 
 The `Workers` compiler is a focused source-to-JavaScript emitter rather than a full .NET runtime.
 It supports the common C# you would expect (`switch` statements, `const string` case labels, static
-helper classes, anonymous objects, records, `foreach`, LINQ-free collection types, `Regex`,
-`DateTimeOffset`, `Guid`), but a few constructs are intentionally out of scope.
+helper classes, instance classes with constructor injection, anonymous objects, records, generic
+methods, `foreach`, LINQ-free collection types, `DateTimeOffset`, `Guid`), but a few constructs are
+intentionally out of scope.
 
 Practical consequences for this codebase:
 
-- **Concrete parameter types only.** The compiler resolves method symbols against a supported
-  whitelist, so helpers such as `Results` use overloads instead of a generic `Json<T>()`, and
-  interfaces, delegates and `object` parameters are avoided.
-- **Static members.** Endpoints are static classes with a static `HandleAsync`, resolved at compile
-  time. This is why routing uses a `switch` rather than a delegate registry.
+- **Instance services with constructor injection.** Since `0.4.0` the compiler emits instance
+  classes, so endpoints and services are plain `sealed class` instances and receive their
+  dependencies (a `D1Database`, a `KvStore`, a queue binding, ...) through the constructor. Only
+  small pure helpers (`Results`, `AuthPassword`, `Hex`, `Cors`) stay `static`. `AppServices.cs` is
+  the composition root: it reads the environment's bindings once and builds every service and
+  endpoint.
+- **Helper services wrap the bindings.** `D1Database` wraps the `D1` binding (parameterised
+  `QueryAsync` / `FirstAsync<T>` / `AllAsync<T>` / `ExecuteAsync`) and `KvStore` wraps the `KV`
+  binding (`GetJsonAsync<T>` / `PutJsonAsync<T>`), so services never touch the raw bindings.
+- **Bindings are injected, not passed per call.** A service takes the bindings it needs once in its
+  constructor instead of receiving them as a parameter on every method.
+- **No `static` fields, `const` is fine.** A `const string X = SampleConfig.Foo;` inlines to a
+  literal; a non-constant static field is a compile error (`WRK119`/`WRK116`). Use instance
+  `readonly` fields for values that are fixed per instance.
+- **No casts or `default` literals.** Cast expressions (`(ulong)x`) and `default` / `Array.Empty`
+  are out of scope, so type the fields to match (e.g. the R2 size limit is a `ulong`) and use
+  `return null;` with a `where T : class` constraint instead of `default`.
+- **Nested types are not allowed.** A `record` nested inside a user class is a compile error
+  (`WRK119`). Declare them at namespace level instead.
+- **No `params` / `ref` / `out` / `in`.** Method arguments must be plain; D1 helpers take an
+  explicit `object[] args`, built with a collection expression `[a, b, c]` (the `new object[] { }`
+  form is also rejected).
+- **No property initializers.** Assign read-only properties in the constructor rather than
+  initialising them inline.
 - **A response body can only be read once.** `WithHeader` / `WithoutHeader` rebuild a `Response`
   from `response.body`, so chaining them onto one object throws `TypeError: This ReadableStream is
   disturbed`. The cache sample therefore builds a separate `Response` for the copy it stores and for
   the copy it returns.
-- **`const` fields inline; non-constant statics do not.** `const string X = SampleConfig.Foo;`
-  compiles to a literal, while a non-constant static field is a compile error (`WRK110`).
 - **Keep the router thin.** All logic lives in the endpoint classes, so the router stays a readable
   index of the worker's URLs.
 - **One queue and one scheduled handler per worker.** The compiler allows a single `[Queue]` and a
@@ -285,7 +322,7 @@ This project builds on the excellent **Workers** package and sample collection b
 **[Iñigo Ruiz-Salinas](https://github.com/iruizsalinas)** — **<https://github.com/iruizsalinas/workers>**.
 
 That repository provides the C#-to-Cloudflare-Workers compiler and the samples that made this
-approach possible. The NuGet package `Workers` (`0.3.0`) used under `src/WorkersDotNet` comes from
+approach possible. The NuGet package `Workers` (`0.4.0`) used under `src/WorkersDotNet` comes from
 there, and its description sums it up well: _"Compile a focused C# profile directly to minimal
 Cloudflare Workers JavaScript."_ If you want to understand how C# is compiled for the edge, or see
 many more worked examples than the handful here, start there.

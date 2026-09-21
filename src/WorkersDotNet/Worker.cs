@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Workers;
 
 namespace WorkersDotNet
@@ -10,6 +11,8 @@ namespace WorkersDotNet
             Env environment,
             Context context)
         {
+            var app = new AppServices(environment);
+
             var origin = request.Headers.Get("origin");
 
             // Browser CORS preflight for cross-origin calls from the frontend
@@ -17,7 +20,7 @@ namespace WorkersDotNet
             if (request.Method == "OPTIONS")
                 return Cors.Preflight(origin, environment);
 
-            var response = await Router.HandleAsync(request, environment, context);
+            var response = await app.Router.HandleAsync(request, context);
 
             // Allow the originating frontend domain (when it is on the
             // ALLOWED_ORIGINS list) to read the response.

@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 
@@ -15,9 +16,9 @@ namespace WorkersDotNet
     /// The full request URL (including <c>?key=</c> used by the UI) is the cache
     /// key, so different keys are cached independently.
     /// </remarks>
-    public static class CacheEndpoint
+    public sealed class CacheEndpoint
     {
-        public static async Task<Response> HandleAsync(Request request, Context context)
+        public async Task<Response> HandleAsync(Request request, Context context)
         {
             var cacheKey = request.Url.ToString();
 

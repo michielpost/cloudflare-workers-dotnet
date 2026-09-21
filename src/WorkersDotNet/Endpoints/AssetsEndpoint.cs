@@ -1,13 +1,21 @@
+using System.Threading.Tasks;
 using Workers;
 
 namespace WorkersDotNet
 {
-    public static class AssetsEndpoint
+    public sealed class AssetsEndpoint
     {
         // Serve the BlazorWebApp as static files via the ASSETS binding.
-        public static async Task<Response> HandleAsync(Request request, Env environment)
+        private readonly IFetcherBinding _assets;
+
+        public AssetsEndpoint(IFetcherBinding assets)
         {
-            return await environment.Assets("ASSETS").FetchAsync(request);
+            _assets = assets;
+        }
+
+        public async Task<Response> HandleAsync(Request request)
+        {
+            return await _assets.FetchAsync(request);
         }
     }
 }

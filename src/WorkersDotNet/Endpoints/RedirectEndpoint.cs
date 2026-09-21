@@ -1,10 +1,11 @@
+using System.Threading.Tasks;
 using Workers;
 
 namespace WorkersDotNet
 {
-    public static class RedirectEndpoint
+    public sealed class RedirectEndpoint
     {
-        public static Task<Response> HandleAsync(Request request)
+        public Task<Response> HandleAsync(Request request)
         {
             var location = request.QueryParameters.Get("to") ?? "https://example.com";
 

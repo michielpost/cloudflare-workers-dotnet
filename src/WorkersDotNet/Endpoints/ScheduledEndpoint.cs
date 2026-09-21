@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Shared;
 using Workers;
 using WorkersDotNet.Services;
@@ -9,22 +10,26 @@ namespace WorkersDotNet
     /// to a KV key. Thin controller: reads the request and maps the
     /// <see cref="ScheduledSampleService"/> result to a response.
     /// </summary>
-    public static class ScheduledEndpoint
+    public sealed class ScheduledEndpoint
     {
-        public static async Task<Response> HandleAsync(Request request, Env environment)
-        {
-            var kv = environment.Kv("KV");
+        private readonly ScheduledSampleService _scheduled;
 
+        public ScheduledEndpoint(ScheduledSampleService scheduled)
+        {
+            _scheduled = scheduled;
+        }
+
+        public async Task<Response> HandleAsync(Request request)
+        {
             if (request.Method == "POST")
             {
-                await ScheduledSampleService.WriteRunAsync(
-                    kv,
+                await _scheduled.WriteRunAsync(
                     SampleConfig.ScheduledCron,
                     DateTimeOffset.UtcNow.ToString("O"),
                     true);
             }
 
-            return Response.Json(await ScheduledSampleService.ReadStatusAsync(kv), 200)
+            return Response.Json(await _scheduled.ReadStatusAsync(), 200)
                 .WithHeader("cache-control", "no-store");
         }
     }
