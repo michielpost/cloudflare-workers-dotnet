@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Shared;
 using Workers;
@@ -64,7 +65,7 @@ namespace WorkersDotNet
             // Content-Length is only a pre-check: the size of the stored object
             // is verified in the service, because the header cannot be trusted.
             var declared = request.Headers.Get("content-length");
-            if (declared is not null && IsDigitString(declared, 9) && int.Parse(declared) > SampleConfig.R2MaxBytes)
+            if (declared is not null && Regex.IsMatch(declared, "^[0-9]{1,9}$") && int.Parse(declared) > SampleConfig.R2MaxBytes)
                 return Results.Error($"The upload is {declared} bytes, the limit is {SampleConfig.R2MaxBytes} bytes.", 413);
 
             var body = request.BodyStream();
@@ -81,23 +82,6 @@ namespace WorkersDotNet
 
             return Response.Json(result.Result, 200)
                 .WithHeader("cache-control", "no-store");
-        }
-
-        /// <summary>
-        /// True when <paramref name="s"/> is a 1-<paramref name="maxDigits"/>-digit
-        /// decimal number (an anchored <c>^[0-9]+$</c> without regular
-        /// expressions, which the Workers compiler does not support).
-        /// </summary>
-        static bool IsDigitString(string s, int maxDigits)
-        {
-            if (s.Length == 0 || s.Length > maxDigits)
-                return false;
-
-            for (var i = 0; i < s.Length; i++)
-                if (s[i] < '0' || s[i] > '9')
-                    return false;
-
-            return true;
         }
     }
 }
