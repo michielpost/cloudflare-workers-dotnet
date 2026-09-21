@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Workers" Version="0.3.0" />
+    <PackageReference Include="Workers" Version="0.4.0" />
   </ItemGroup>
 
 	<ItemGroup>
@@ -19,9 +19,7 @@
        feature in subfolders (Kv, Queue, D1, Telemetry, ...), so include them all
        but leave out the Shared project's own build output. -->
   <ItemGroup>
-    <Compile Include="../Shared/**/*.cs"
-             Exclude="../Shared/obj/**;../Shared/bin/**"
-             LinkBase="Shared" />
+    <Compile Include="../Shared/**/*.cs" Exclude="../Shared/obj/**;../Shared/bin/**" LinkBase="Shared" />
   </ItemGroup>
 
 </Project>

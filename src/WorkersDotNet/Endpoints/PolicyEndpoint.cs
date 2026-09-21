@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Shared;
 using Workers;
 
@@ -40,12 +39,31 @@ namespace WorkersDotNet
             if (contentType is null || !contentType.StartsWith("application/json") || contentLength is null)
                 return false;
 
-            if (!Regex.IsMatch(contentLength, "^[1-9][0-9]{0,3}$"))
+            if (!IsValidContentLength(contentLength))
                 return false;
 
             return int.Parse(contentLength) <= MaxBodyBytes
                 && request.BodyStream() is not null
                 && !request.BodyUsed;
+        }
+
+        /// <summary>
+        /// True for a 1-4 digit length with no leading zero (an anchored
+        /// <c>^[1-9][0-9]{0,3}$</c> without regular expressions, which the
+        /// Workers compiler does not support).
+        /// </summary>
+        private static bool IsValidContentLength(string s)
+        {
+            if (s.Length == 0 || s.Length > 4)
+                return false;
+            if (s[0] < '1' || s[0] > '9')
+                return false;
+
+            for (var i = 1; i < s.Length; i++)
+                if (s[i] < '0' || s[i] > '9')
+                    return false;
+
+            return true;
         }
 
         private static bool IsValid(ReadingInput? input)

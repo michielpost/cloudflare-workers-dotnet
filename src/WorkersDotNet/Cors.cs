@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Workers;
 
 namespace WorkersDotNet
@@ -39,23 +38,20 @@ namespace WorkersDotNet
             if (allowedOrigins is null || allowedOrigins.Length == 0)
                 return false;
 
-            return Regex.IsMatch(origin, Pattern(allowedOrigins));
-        }
+            // The configured list is comma-separated and anchored: an origin has
+            // to match one entry exactly (dots are literal, spaces are ignored).
+            var start = 0;
+            for (var i = 0; i <= allowedOrigins.Length; i++)
+            {
+                if (i == allowedOrigins.Length || allowedOrigins[i] == ',')
+                {
+                    if (origin == allowedOrigins.Substring(start, i - start).Trim())
+                        return true;
+                    start = i + 1;
+                }
+            }
 
-        /// <summary>
-        /// Turns the configured list into an anchored regular expression, e.g.
-        /// <c>"http://localhost:5217,https://a.com"</c> becomes
-        /// <c>^(?:http://localhost:5217|https://a\.com)$</c>.
-        /// </summary>
-        static string Pattern(string allowedOrigins)
-        {
-            // Spaces around the entries are insignificant, and dots have to be
-            // escaped so they match a literal "." instead of any character.
-            var alternation = allowedOrigins.Replace(" ", "");
-            alternation = alternation.Replace(".", "\\.");
-            alternation = alternation.Replace(",", "|");
-
-            return $"^(?:{alternation})$";
+            return false;
         }
 
         public static Response Preflight(string? origin, Env environment)

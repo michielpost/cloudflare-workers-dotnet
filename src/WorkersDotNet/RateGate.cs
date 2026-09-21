@@ -21,10 +21,10 @@ namespace WorkersDotNet
     [DurableObject("RateGate")]
     public sealed class RateGate
     {
-        const string ExpiresKey = "lease_expires_at";
-        const string OwnerKey = "lease_owner";
-        const string TokenKey = "lease_token";
-        const int LeaseSeconds = SampleConfig.TelemetryRateLimitSeconds;
+        readonly string ExpiresKey = "lease_expires_at";
+        readonly string OwnerKey = "lease_owner";
+        readonly string TokenKey = "lease_token";
+        readonly int LeaseSeconds = SampleConfig.TelemetryRateLimitSeconds;
 
         readonly DurableObjectState _state;
 
