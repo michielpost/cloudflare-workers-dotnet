@@ -85,13 +85,28 @@ namespace WorkersDotNet
             // CORS is middleware, so it answers the browser preflight before any
             // route runs and decorates every response - including the error ones
             // produced by OnError below.
-            router.Use(Cors.Allow(
-                CorsPolicy.ParseOrigins(environment.Variable(CorsPolicy.AllowedOriginsVariable)),
-                CorsPolicy.Methods(),
-                false,
-                CorsPolicy.RequestHeaders(),
-                CorsPolicy.ExposedHeaders(),
-                CorsPolicy.MaxAgeSeconds));
+            //
+            // Cors.Allow rejects an empty allowlist, and an empty allowlist is a
+            // valid configuration here (the deployed frontend is served by this
+            // same worker, so its calls are same-origin), so that case gets a
+            // middleware that only refuses preflights.
+            var allowedOrigins = CorsPolicy.ParseOrigins(
+                environment.Variable(CorsPolicy.AllowedOriginsVariable));
+
+            if (allowedOrigins.Length == 0)
+            {
+                router.Use((request, route, next) => CorsPolicy.RefusePreflightAsync(request, next));
+            }
+            else
+            {
+                router.Use(Cors.Allow(
+                    allowedOrigins,
+                    CorsPolicy.Methods(),
+                    false,
+                    CorsPolicy.RequestHeaders(),
+                    CorsPolicy.ExposedHeaders(),
+                    CorsPolicy.MaxAgeSeconds));
+            }
 
             // Turns an unhandled exception into the same JSON error shape the
             // endpoints use, instead of the router's empty default response.

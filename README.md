@@ -208,13 +208,22 @@ ALLOWED_ORIGINS = "http://localhost:5217,https://localhost:7000,https://app.exam
 router's built-in `Cors.Allow` middleware:
 
 ```csharp
-router.Use(Cors.Allow(
-    CorsPolicy.ParseOrigins(environment.Variable("ALLOWED_ORIGINS")),
-    CorsPolicy.Methods(),
-    credentials: false,
-    CorsPolicy.RequestHeaders(),
-    CorsPolicy.ExposedHeaders(),
-    CorsPolicy.MaxAgeSeconds));
+var allowedOrigins = CorsPolicy.ParseOrigins(environment.Variable(CorsPolicy.AllowedOriginsVariable));
+
+if (allowedOrigins.Length == 0)
+{
+    router.Use((request, route, next) => CorsPolicy.RefusePreflightAsync(request, next));
+}
+else
+{
+    router.Use(Cors.Allow(
+        allowedOrigins,
+        CorsPolicy.Methods(),
+        credentials: false,
+        CorsPolicy.RequestHeaders(),
+        CorsPolicy.ExposedHeaders(),
+        CorsPolicy.MaxAgeSeconds));
+}
 ```
 
 An origin has to match an entry exactly, and an empty or missing list grants no cross-origin access
@@ -222,6 +231,17 @@ at all. The middleware answers preflights and only emits `access-control-allow-o
 accepted origin, which means everything else is left to the browser to block. `CorsPolicy.IsCorsFetch`
 tells the endpoints whether a request came from another origin, so they can skip the work a
 preflight already covered.
+
+Two details of `Cors.Allow` shape that code:
+
+- It **throws** on an empty origin array, so an empty allow-list cannot be passed to it. That is why
+  the empty case registers `CorsPolicy.RefusePreflightAsync` instead, which refuses preflights with
+  `403` and passes every other request through untouched. Without the guard the worker would throw
+  in the `AppServices` constructor and fail every request, not just cross-origin ones.
+- It **throws** on an entry that is not an exact `http(s)` origin, so a typo such as a trailing
+  slash would take the whole worker down. `ParseOrigins` therefore drops entries that are not an
+  exact origin (scheme plus host, no path, query, fragment or trailing slash) and logs them at debug
+  level, so a bad entry only denies that origin.
 
 Where the value is set:
 
@@ -231,7 +251,8 @@ Where the value is set:
 | `wrangler.toml`  | empty                                     | The deployed Blazor app is served by this same worker through the `[assets]` binding (`ApiBaseUrl` is empty in `appsettings.json`), so its calls are same-origin and need no entry |
 
 Add origins to `wrangler.toml` only when the frontend is hosted somewhere else, such as Cloudflare
-Pages or a custom domain. Spaces around entries are ignored.
+Pages or a custom domain. Spaces around entries are ignored, and empty entries (a trailing comma, for
+example) are dropped rather than treated as an origin.
 
 > Browsing the frontend as `127.0.0.1` instead of `localhost` produces a different origin. Add
 > `http://127.0.0.1:5217` to the list if you prefer that host name.

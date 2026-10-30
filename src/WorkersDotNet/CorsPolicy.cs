@@ -48,32 +48,101 @@ namespace WorkersDotNet
         /// <c>string.Split</c> (the compiler only supports a fixed set of string
         /// methods).
         /// </summary>
+        /// <remarks>
+        /// Empty entries are dropped, so <c>""</c>, <c>" "</c> and a trailing
+        /// comma all mean "no origins" rather than "one empty origin". Entries
+        /// that are not an exact <c>http(s)</c> origin are dropped and logged at
+        /// debug level instead of being passed on: <c>Cors.Allow</c> throws on a
+        /// malformed origin, and that would take the whole worker down on every
+        /// request rather than just denying one origin.
+        /// </remarks>
         public static string[] ParseOrigins(string allowedOrigins)
         {
             if (allowedOrigins is null || allowedOrigins.Length == 0)
                 return new string[0];
 
-            var count = 1;
-            for (var i = 0; i < allowedOrigins.Length; i++)
-            {
-                if (allowedOrigins[i] == ',')
-                    count++;
-            }
-
-            var origins = new string[count];
-            var index = 0;
+            var count = 0;
             var start = 0;
             for (var i = 0; i <= allowedOrigins.Length; i++)
             {
                 if (i == allowedOrigins.Length || allowedOrigins[i] == ',')
                 {
-                    origins[index] = allowedOrigins.Substring(start, i - start).Trim();
-                    index++;
+                    if (IsExactOrigin(allowedOrigins.Substring(start, i - start).Trim()))
+                        count++;
+                    start = i + 1;
+                }
+            }
+
+            var origins = new string[count];
+            var index = 0;
+            start = 0;
+            for (var i = 0; i <= allowedOrigins.Length; i++)
+            {
+                if (i == allowedOrigins.Length || allowedOrigins[i] == ',')
+                {
+                    var entry = allowedOrigins.Substring(start, i - start).Trim();
+                    if (IsExactOrigin(entry))
+                    {
+                        origins[index] = entry;
+                        index++;
+                    }
+                    else if (entry.Length != 0)
+                    {
+                        Log.Debug($"ALLOWED_ORIGINS entry \"{entry}\" is not an exact http(s) origin and is ignored.");
+                    }
                     start = i + 1;
                 }
             }
 
             return origins;
+        }
+
+        /// <summary>
+        /// True when the value is something <c>Cors.Allow</c> accepts: <c>*</c>,
+        /// or a scheme and host with no path, query, fragment or trailing slash.
+        /// </summary>
+        static bool IsExactOrigin(string value)
+        {
+            if (value.Length == 0)
+                return false;
+
+            if (value == "*")
+                return true;
+
+            var schemeLength = 0;
+            if (value.StartsWith("https://"))
+                schemeLength = 8;
+            else if (value.StartsWith("http://"))
+                schemeLength = 7;
+            else
+                return false;
+
+            var host = value.Substring(schemeLength);
+            if (host.Length == 0)
+                return false;
+
+            for (var i = 0; i < host.Length; i++)
+            {
+                var c = host[i];
+                if (c == '/' || c == '?' || c == '#' || c == ' ')
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The middleware used when the allowlist is empty. <c>Cors.Allow</c>
+        /// requires at least one origin, and an empty allowlist means "no
+        /// cross-origin access", so a preflight is refused and every other
+        /// request is passed through untouched.
+        /// </summary>
+        public static Task<Response> RefusePreflightAsync(Request request, Func<Task<Response>> next)
+        {
+            if (request.Method == "OPTIONS" && IsCorsFetch(request))
+                return Task.FromResult(Results.Empty(403));
+
+            return next();
         }
 
         /// <summary>
