@@ -103,7 +103,16 @@ code,
     position: sticky;
     top: 0;
     height: 100vh;
+    /* The nav can be taller than a short viewport, so it stays scrollable, but
+       the scrollbar itself is hidden to keep the sidebar flush with the edge. */
     overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.sidebar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
 }
 
 .sidebar-brand {

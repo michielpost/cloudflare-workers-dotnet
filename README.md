@@ -110,7 +110,7 @@ sample, and the telemetry poll that enqueues the sensors whose `next_read_at` ha
 | Route | Method | Sample |
 | ----- | ------ | ------ |
 | `/api/json` | GET | JSON response |
-| `/api/proxy` | GET | Server-side `fetch` (the target is validated against an allow-list) |
+| `/api/proxy` | GET | Server-side `fetch` (the target must be an absolute `http(s)` URL) |
 | `/api/redirect` | GET | Real 302 |
 | `/api/policy` | POST | JSON body validation, 400 with a request id on failure |
 | `/api/cache` | GET, POST | Cache API: read through the cache, POST purges the key |
@@ -187,12 +187,24 @@ return Results.Error("Method not allowed", 405);                       // error 
 return Results.Json(new ApiResponse(...), 201);                        // explicit status code
 return Results.Empty(204);                                             // no body
 return Results.NoStore(Response.Json(payload, 200));                   // cache-control: no-store
+return Results.Copy(proxied, headers);                                 // re-tag a fetched/cached response
 ```
 
 `Results.Error` returns `{ "error": "...", "requestId": "..." }`, which makes failures easy to
 correlate with logs. `Results.Empty` and `Results.NoStore` exist because `Response` lost its
 `Empty` / `WithHeader` helpers in `0.6`: a `Response` is now also the init object of
 `new Response(body, init)`, and its `Status` / `Headers` are init-only.
+
+`Results.Copy` exists because the responses returned by `Http.FetchAsync` and by
+`CacheStorage.Default.MatchAsync` have **immutable** headers: `response.Headers.Set(...)` on them
+throws `TypeError: Can't modify immutable headers.` Copy the headers into a new `Headers`, change
+those, and let `Results.Copy` rebuild the response around them:
+
+```csharp
+var headers = new Headers(proxied.Headers);
+headers.Set("x-proxied-by", "Workers");
+return Results.Copy(proxied, headers);
+```
 
 ## CORS
 

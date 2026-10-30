@@ -53,5 +53,31 @@ namespace WorkersDotNet
             response.Headers.Set("cache-control", "no-store");
             return response;
         }
+
+        /// <summary>
+        /// Rebuilds a response that came from the runtime - <c>fetch</c> or the
+        /// Cache API - around a mutable copy of its headers.
+        /// </summary>
+        /// <remarks>
+        /// Those responses have <em>immutable</em> headers, so
+        /// <c>response.Headers.Set(...)</c> throws "Can't modify immutable
+        /// headers". The body is handed to a new response instead, which is the
+        /// only way to add a header to a proxied or cached response.
+        /// </remarks>
+        public static Response Copy(Response source, Headers headers)
+        {
+            var init = new Response(null)
+            {
+                Status = source.Status,
+                StatusText = source.StatusText,
+                Headers = headers
+            };
+
+            // A 204 or 304 must not carry a body, and the runtime rejects one.
+            if (source.Status == 204 || source.Status == 304)
+                return new Response(null, init);
+
+            return new Response(source.Body, init);
+        }
     }
 }

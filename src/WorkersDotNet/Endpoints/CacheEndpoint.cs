@@ -28,11 +28,15 @@ namespace WorkersDotNet
             var cached = await CacheStorage.Default.MatchAsync(cacheKey);
             if (cached is not null)
             {
-                cached.Headers.Set("x-cache", "hit");
-                cached.Headers.Set("x-cache-key", cacheKey);
-                cached.Headers.Set("x-cache-note", "Served from caches.default on the edge");
-                cached.Headers.Set("cache-control", "no-store");
-                return cached;
+                // A response from the Cache API has immutable headers, so the
+                // hit markers cannot be set on it directly. Copy the headers into
+                // a new response instead.
+                var hitHeaders = new Headers(cached.Headers);
+                hitHeaders.Set("x-cache", "hit");
+                hitHeaders.Set("x-cache-key", cacheKey);
+                hitHeaders.Set("x-cache-note", "Served from caches.default on the edge");
+                hitHeaders.Set("cache-control", "no-store");
+                return Results.Copy(cached, hitHeaders);
             }
 
             var payload = new CachePayload(

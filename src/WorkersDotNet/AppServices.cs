@@ -109,8 +109,14 @@ namespace WorkersDotNet
             }
 
             // Turns an unhandled exception into the same JSON error shape the
-            // endpoints use, instead of the router's empty default response.
-            router.OnError((error, request, route) => Results.Error(error.Message, error.Status));
+            // endpoints use, instead of the router's empty default response. The
+            // exception itself goes to the log, because the client only gets a
+            // generic message.
+            router.OnError((error, request, route) =>
+            {
+                Log.Error(request.Method + " " + new Url(request.Url).Pathname + " failed: " + error.Exception.Message);
+                return Results.Error(error.Message, error.Status);
+            });
 
             // Every route is registered with Any: the endpoints validate the HTTP
             // method themselves and answer with a structured ApiResponse error.
