@@ -9,9 +9,9 @@ namespace WorkersDotNet.Services
     /// </summary>
     public sealed class KvStore
     {
-        private readonly IKvNamespace _kv;
+        private readonly KVNamespace _kv;
 
-        public KvStore(IKvNamespace kv)
+        public KvStore(KVNamespace kv)
         {
             _kv = kv;
         }
@@ -19,12 +19,12 @@ namespace WorkersDotNet.Services
         /// <summary>Reads a key's value, or null when the key is absent.</summary>
         public async Task<string?> GetTextAsync(string key)
         {
-            return await _kv.GetTextAsync(key);
+            return await _kv.GetAsync(key);
         }
 
         public async Task PutTextAsync(string key, string value)
         {
-            await _kv.PutTextAsync(key, value);
+            await _kv.PutAsync(key, value);
         }
 
         /// <summary>

@@ -24,11 +24,11 @@ namespace WorkersDotNet.Services
         readonly int JobLimit = 10;
         readonly int TimeoutSeconds = SampleConfig.TelemetryFetchTimeoutSeconds;
 
-        private readonly D1Database _db;
-        private readonly IQueueProducer _queue;
-        private readonly IDurableObjectNamespace _gateNs;
+        private readonly D1Store _db;
+        private readonly Queue _queue;
+        private readonly DurableObjectNamespace _gateNs;
 
-        public TelemetryService(D1Database db, IQueueProducer queue, IDurableObjectNamespace gateNs)
+        public TelemetryService(D1Store db, Queue queue, DurableObjectNamespace gateNs)
         {
             _db = db;
             _queue = queue;
@@ -41,35 +41,40 @@ namespace WorkersDotNet.Services
         /// </summary>
         public async Task<List<string>> EnqueueDueAsync()
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = Clock.NowMs();
 
             var due = await _db.AllAsync<DueSensor>(
                 _db.Prepare($"SELECT sensor_id AS sensorId, interval_minutes AS intervalMinutes FROM sensors WHERE active = 1 AND next_read_at <= ? ORDER BY next_read_at LIMIT {BatchSize}")
-                    .Bind(now.ToUnixTimeMilliseconds()));
+                    .Bind(now));
 
             var sensorIds = new List<string>();
-            var messages = new List<QueuedMessage>();
+            var messages = new List<MessageSendRequest<QueuedMessage>>();
 
             foreach (var sensor in due)
             {
-                var jobId = Guid.NewGuid().ToString();
+                var jobId = Crypto.RandomUuid();
 
                 await _db.ExecuteAsync(
                     _db.Prepare("INSERT OR REPLACE INTO jobs (id, sensor_id, status, attempts, last_error, queued_at, processed_at) VALUES (?, ?, ?, 0, '', ?, 0)")
-                        .Bind(jobId, sensor.SensorId, "queued", now.ToUnixTimeMilliseconds()));
+                        .Bind(jobId, sensor.SensorId, "queued", now));
 
                 await _db.ExecuteAsync(
                     _db.Prepare("UPDATE sensors SET next_read_at = ? WHERE sensor_id = ?")
-                        .Bind(now.AddSeconds(sensor.IntervalMinutes * 60).ToUnixTimeMilliseconds(), sensor.SensorId));
+                        .Bind(now + (sensor.IntervalMinutes * 60.0 * 1000.0), sensor.SensorId));
 
-                messages.Add(new QueuedMessage(sensor.SensorId, "", jobId, now.ToUnixTimeMilliseconds()));
+                var request = new MessageSendRequest<QueuedMessage>
+                {
+                    Body = new QueuedMessage(sensor.SensorId, "", jobId, now),
+                    ContentType = QueueContentType.Json
+                };
+                messages.Add(request);
                 sensorIds.Add(sensor.SensorId);
             }
 
             if (messages.Count != 0)
-                await _queue.SendJsonBatchAsync(messages);
+                await _queue.SendBatchAsync(messages);
 
-            Console.WriteLine($"Telemetry: queued {messages.Count} sensor job(s)");
+            Log.Info($"Telemetry: queued {messages.Count} sensor job(s)");
             return sensorIds;
         }
 
@@ -81,7 +86,7 @@ namespace WorkersDotNet.Services
         public async Task ProcessJobAsync(QueuedMessage message, int attempts)
         {
             var lease = await _gateNs.GetByName(GateName)
-                .InvokeAsync<Lease>("reserve", new List<object> { message.JobId });
+                .InvokeAsync<Lease>("reserve", message.JobId);
             if (lease is null || !lease.Allowed)
             {
                 var owner = lease is null ? "" : lease.Owner;
@@ -97,9 +102,9 @@ namespace WorkersDotNet.Services
             var controller = new AbortController();
             var timeout = Timers.SetTimeout(
                 () => controller.Abort("the weather API did not answer in time"),
-                TimeSpan.FromMilliseconds(TimeoutSeconds * 1000));
+                TimeoutSeconds * 1000.0);
 
-            var readingAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var readingAt = Clock.NowMs();
             var temperature = 0.0;
             var airQuality = 0.0;
             var condition = "unknown";
@@ -107,12 +112,12 @@ namespace WorkersDotNet.Services
 
             try
             {
-                var options = new FetchOptions { Signal = controller.Signal };
+                var options = new RequestInit { Signal = controller.Signal };
                 var responses = await Task.WhenAll(
                     Http.FetchAsync(ForecastUrl(latitude, longitude), options),
                     Http.FetchAsync(AirQualityUrl(latitude, longitude), options));
 
-                if (!responses[0].IsSuccessStatusCode || !responses[1].IsSuccessStatusCode)
+                if (!responses[0].Ok || !responses[1].Ok)
                     throw new InvalidOperationException("the weather API did not answer with a 2xx status");
 
                 var forecast = await responses[0].JsonAsync<ForecastResponse>();
@@ -129,9 +134,9 @@ namespace WorkersDotNet.Services
                 // The provider is a nice-to-have: when it is slow or unreachable
                 // the pipeline still produces a reading, so the sample keeps
                 // working offline. The UI marks those rows as "simulated".
-                Console.Error.WriteLine($"Weather API unavailable ({exception.Message}), storing a simulated reading instead");
-                temperature = 12 + (Random.Shared.NextDouble() * 10);
-                airQuality = 4 + (Random.Shared.NextDouble() * 18);
+                Log.Error($"Weather API unavailable ({exception.Message}), storing a simulated reading instead");
+                temperature = 12 + (RandomUnit() * 10);
+                airQuality = 4 + (RandomUnit() * 18);
                 condition = RandomCondition();
                 source = SimulatedSource;
             }
@@ -140,7 +145,7 @@ namespace WorkersDotNet.Services
                 Timers.ClearTimeout(timeout);
             }
 
-            var processedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var processedAt = Clock.NowMs();
 
             await _db.ExecuteAsync(
                 _db.Prepare("INSERT OR REPLACE INTO readings (id, sensor_id, temperature, air_quality, condition, source, reading_at, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
@@ -148,10 +153,9 @@ namespace WorkersDotNet.Services
 
             await MarkJobAsync(message.JobId, "done", attempts, "");
 
-            await _gateNs.GetByName(GateName)
-                .InvokeVoidAsync("complete", new List<object> { lease.Token });
+            await _gateNs.GetByName(GateName).InvokeAsync("complete", lease.Token);
 
-            Console.WriteLine($"Telemetry: sensor {message.Text} stored a {source} reading ({condition})");
+            Log.Info($"Telemetry: sensor {message.Text} stored a {source} reading ({condition})");
         }
 
         /// <summary>Records how a job ended, so the UI can show its state.</summary>
@@ -159,7 +163,7 @@ namespace WorkersDotNet.Services
         {
             await _db.ExecuteAsync(
                 _db.Prepare("UPDATE jobs SET status = ?, attempts = ?, last_error = ?, processed_at = ? WHERE id = ?")
-                    .Bind(status, attempts, error, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), jobId));
+                    .Bind(status, attempts, error, Clock.NowMs(), jobId));
         }
 
         /// <summary>Makes every sensor due again (POST /api/telemetry/reset).</summary>
@@ -212,7 +216,7 @@ namespace WorkersDotNet.Services
         {
             try
             {
-                var lease = await _gateNs.GetByName(GateName).InvokeAsync<Lease>("peek", new List<object>());
+                var lease = await _gateNs.GetByName(GateName).InvokeAsync<Lease>("peek");
 
                 if (lease is null || !lease.Allowed)
                     return new GateInfo(false, "", SampleConfig.TelemetryRateLimitSeconds, 0);
@@ -221,7 +225,7 @@ namespace WorkersDotNet.Services
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine($"Could not read the rate gate ({exception.Message})");
+                Log.Error($"Could not read the rate gate ({exception.Message})");
                 return new GateInfo(false, "", SampleConfig.TelemetryRateLimitSeconds, 0);
             }
         }
@@ -236,10 +240,21 @@ namespace WorkersDotNet.Services
             return $"https://air-quality-api.open-meteo.com/v1/air-quality?latitude={latitude}&longitude={longitude}&current=pm2_5";
         }
 
+        /// <summary>
+        /// A random number in [0, 1). The Workers C# profile has no
+        /// <c>Random</c>, so the bytes come from the runtime's crypto source.
+        /// </summary>
+        static double RandomUnit()
+        {
+            var bytes = Crypto.GetRandomValues(new byte[4]);
+            var value = (bytes[0] * 16777216.0) + (bytes[1] * 65536.0) + (bytes[2] * 256.0) + bytes[3];
+            return value / 4294967296.0;
+        }
+
         /// <summary>Picks a plausible condition for a simulated reading.</summary>
         static string RandomCondition()
         {
-            var roll = Random.Shared.NextDouble();
+            var roll = RandomUnit();
 
             if (roll < 0.5)
                 return "clear";

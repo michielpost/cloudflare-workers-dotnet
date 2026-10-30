@@ -32,8 +32,7 @@ namespace WorkersDotNet
             if (request.Method != "GET")
                 return Results.Error("Only GET and POST are supported on /api/items", 405);
 
-            return Response.Json(await _items.ReadSnapshotAsync(), 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(await _items.ReadSnapshotAsync(), 200));
         }
 
         /// <summary>POST /api/items/update edits one existing item.</summary>
@@ -103,8 +102,7 @@ namespace WorkersDotNet
             if (outcome.Error is not null)
                 return Results.Error(outcome.Error, outcome.Status);
 
-            return Response.Json(outcome.Result, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(outcome.Result, 200));
         }
     }
 }

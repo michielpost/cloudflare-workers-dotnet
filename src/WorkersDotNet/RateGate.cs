@@ -17,21 +17,21 @@ namespace WorkersDotNet
     /// <c>complete</c> when it is done; the lease is never held longer than
     /// <see cref="LeaseSeconds"/> seconds, so a crashed consumer cannot block the
     /// pipeline forever.
+    /// <para>
+    /// Since Workers 0.6 a Durable Object is a class deriving from
+    /// <see cref="DurableObject"/> rather than a class carrying a
+    /// <c>[DurableObject]</c> attribute. The base class supplies
+    /// <see cref="DurableObject.Ctx"/> and <see cref="DurableObject.Env"/>, so no
+    /// constructor is needed, and its public methods are the RPC surface the
+    /// stub invokes by name.
+    /// </para>
     /// </remarks>
-    [DurableObject("RateGate")]
-    public sealed class RateGate
+    public sealed class RateGate : DurableObject
     {
         const string ExpiresKey = "lease_expires_at";
         const string OwnerKey = "lease_owner";
         const string TokenKey = "lease_token";
         const int LeaseSeconds = SampleConfig.TelemetryRateLimitSeconds;
-
-        readonly DurableObjectState _state;
-
-        public RateGate(DurableObjectState state, Env environment)
-        {
-            _state = state;
-        }
 
         /// <summary>
         /// Grants a lease when no other lease is active, and refuses when one is.
@@ -40,22 +40,22 @@ namespace WorkersDotNet
         /// </summary>
         public async Task<Lease> ReserveAsync(string requestId)
         {
-            var expiresAt = await _state.Storage.GetAsync<long>(ExpiresKey);
+            var expiresAt = await Ctx.Storage.GetAsync<double>(ExpiresKey);
 
-            if (expiresAt > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            if (expiresAt > Clock.NowMs())
             {
-                var busyOwner = await _state.Storage.GetAsync<string>(OwnerKey);
+                var busyOwner = await Ctx.Storage.GetAsync<string>(OwnerKey);
                 return new Lease(false, "", busyOwner is null ? "" : busyOwner, expiresAt);
             }
 
             var token = requestId;
             if (token is null || token.Length == 0)
-                token = Guid.NewGuid().ToString();
+                token = Crypto.RandomUuid();
 
-            var expires = DateTimeOffset.UtcNow.AddSeconds(LeaseSeconds).ToUnixTimeMilliseconds();
-            await _state.Storage.PutAsync(ExpiresKey, expires);
-            await _state.Storage.PutAsync(OwnerKey, requestId);
-            await _state.Storage.PutAsync(TokenKey, token);
+            var expires = Clock.NowMs() + (LeaseSeconds * 1000.0);
+            await Ctx.Storage.PutAsync(ExpiresKey, expires);
+            await Ctx.Storage.PutAsync(OwnerKey, requestId);
+            await Ctx.Storage.PutAsync(TokenKey, token);
 
             return new Lease(true, token, requestId, expires);
         }
@@ -66,23 +66,23 @@ namespace WorkersDotNet
         /// </summary>
         public async Task CompleteAsync(string token)
         {
-            var current = await _state.Storage.GetAsync<string>(TokenKey);
+            var current = await Ctx.Storage.GetAsync<string>(TokenKey);
             if (current is null || current != token)
                 return;
 
-            await _state.Storage.DeleteAsync(ExpiresKey);
-            await _state.Storage.DeleteAsync(OwnerKey);
-            await _state.Storage.DeleteAsync(TokenKey);
+            await Ctx.Storage.DeleteAsync(ExpiresKey);
+            await Ctx.Storage.DeleteAsync(OwnerKey);
+            await Ctx.Storage.DeleteAsync(TokenKey);
         }
 
         /// <summary>Reports the current lease without taking one; the UI reads this.</summary>
         public async Task<Lease> PeekAsync()
         {
-            var expiresAt = await _state.Storage.GetAsync<long>(ExpiresKey);
-            if (expiresAt <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            var expiresAt = await Ctx.Storage.GetAsync<double>(ExpiresKey);
+            if (expiresAt <= Clock.NowMs())
                 return new Lease(false, "", "", 0);
 
-            var owner = await _state.Storage.GetAsync<string>(OwnerKey);
+            var owner = await Ctx.Storage.GetAsync<string>(OwnerKey);
             return new Lease(true, "", owner is null ? "" : owner, expiresAt);
         }
     }

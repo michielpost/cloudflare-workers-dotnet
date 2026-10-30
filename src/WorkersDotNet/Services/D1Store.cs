@@ -12,11 +12,11 @@ namespace WorkersDotNet.Services
     /// compiler cannot spread a runtime array into a <c>params</c> binding) and
     /// hand it to one of the helpers below.
     /// </summary>
-    public sealed class D1Database
+    public sealed class D1Store
     {
-        private readonly ID1Database _db;
+        private readonly Workers.D1Database _db;
 
-        public D1Database(ID1Database db)
+        public D1Store(Workers.D1Database db)
         {
             _db = db;
         }

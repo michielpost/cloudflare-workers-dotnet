@@ -20,7 +20,7 @@ namespace WorkersDotNet
 
         public static Response Ok(string message, string path)
         {
-            return Response.Json(new ApiResponse(true, message, path, DateTimeOffset.UtcNow), 200);
+            return Response.Json(new ApiResponse(true, message, path, Clock.NowIso()), 200);
         }
 
         public static Response Json(ApiResponse value, int status)
@@ -30,7 +30,28 @@ namespace WorkersDotNet
 
         public static Response Error(string message, int status)
         {
-            return Response.Json(new { error = message, requestId = Guid.NewGuid() }, status);
+            return Response.Json(new { error = message, requestId = Crypto.RandomUuid() }, status);
+        }
+
+        /// <summary>
+        /// An empty response with the given status code. Replaces the removed
+        /// <c>Response.Empty</c> helper: a <c>Response</c> is now also the
+        /// <c>ResponseInit</c> of <c>new Response(body, init)</c>.
+        /// </summary>
+        public static Response Empty(int status)
+        {
+            var init = new Response(null) { Status = status };
+            return new Response(null, init);
+        }
+
+        /// <summary>
+        /// Marks a response as uncacheable and returns it. Every API response
+        /// uses this so the browser never serves its own copy.
+        /// </summary>
+        public static Response NoStore(Response response)
+        {
+            response.Headers.Set("cache-control", "no-store");
+            return response;
         }
     }
 }

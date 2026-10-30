@@ -10,6 +10,12 @@ namespace Shared;
 /// are due, puts one job per sensor on a queue, the consumer takes a lease at the
 /// RateGate Durable Object and then calls the weather API, and the reading lands
 /// in D1.
+/// <para>
+/// The millisecond fields are <c>double</c> because the Workers C# profile has no
+/// <c>DateTimeOffset</c> and no integer conversion: the worker reads the clock
+/// through the runtime's <c>Date</c> type, which counts milliseconds as a
+/// JavaScript number.
+/// </para>
 /// </remarks>
 public sealed record SensorInfo(
     string SensorId,
@@ -17,7 +23,7 @@ public sealed record SensorInfo(
     double Latitude,
     double Longitude,
     int IntervalMinutes,
-    long NextReadAtMs,
+    double NextReadAtMs,
     int Active,
     int Reads,
     int Pending);
@@ -29,8 +35,8 @@ public sealed record JobInfo(
     string Status,
     int Attempts,
     string LastError,
-    long QueuedAtMs,
-    long ProcessedAtMs);
+    double QueuedAtMs,
+    double ProcessedAtMs);
 
 /// <summary>
 /// One finished reading. Source is "live" for a real API call and "simulated"
@@ -43,15 +49,15 @@ public sealed record ReadingInfo(
     double AirQuality,
     string Condition,
     string Source,
-    long ReadingAtMs,
-    long ProcessedAtMs);
+    double ReadingAtMs,
+    double ProcessedAtMs);
 
 /// <summary>State of the RateGate Durable Object that serialises outbound calls.</summary>
 public sealed record GateInfo(
     bool Busy,
     string Owner,
     int LeaseSeconds,
-    long ExpiresAtMs);
+    double ExpiresAtMs);
 
 /// <summary>Counters shown at the top of the telemetry page.</summary>
 public sealed record PipelineStats(int Sensors, int Readings, int Queued, int Done, int Failed, int Attempts);
@@ -84,4 +90,4 @@ public sealed record TelemetryRunResult(
 /// when it lasts. <see cref="Token"/> is what the holder passes back to
 /// <c>complete</c>, so a slow job cannot release a newer job's lease.
 /// </summary>
-public sealed record Lease(bool Allowed, string Token, string Owner, long ExpiresAtMs);
+public sealed record Lease(bool Allowed, string Token, string Owner, double ExpiresAtMs);

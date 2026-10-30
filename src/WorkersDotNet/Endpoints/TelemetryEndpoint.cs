@@ -31,8 +31,7 @@ namespace WorkersDotNet
             if (request.Method != "GET")
                 return Results.Error("Only GET and POST are supported on /api/telemetry", 405);
 
-            return Response.Json(await _telemetry.ReadStatusAsync(), 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(await _telemetry.ReadStatusAsync(), 200));
         }
 
         /// <summary>
@@ -50,8 +49,7 @@ namespace WorkersDotNet
                 : $"{sensorIds.Count} sensor job(s) queued on {SampleConfig.TelemetryQueueName}.";
 
             var result = new TelemetryRunResult(true, message, sensorIds.Count, sensorIds, status);
-            return Response.Json(result, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(result, 200));
         }
 
         /// <summary>
@@ -66,8 +64,7 @@ namespace WorkersDotNet
             var message = $"{status.Stats.Sensors} sensor(s) set to active and due now.";
 
             var result = new TelemetryRunResult(true, message, 0, new List<string>(), status);
-            return Response.Json(result, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(result, 200));
         }
     }
 }

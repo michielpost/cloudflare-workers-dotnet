@@ -25,8 +25,7 @@ namespace WorkersDotNet
                 return await ProduceAsync(request);
 
             var status = await _queue.ReadStatusAsync();
-            return Response.Json(status, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(status, 200));
         }
 
         async Task<Response> ProduceAsync(Request request)
@@ -48,8 +47,7 @@ namespace WorkersDotNet
             if (result.Error is not null)
                 return Results.Error(result.Error, result.Status);
 
-            return Response.Json(result.Result, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(result.Result, 200));
         }
     }
 }

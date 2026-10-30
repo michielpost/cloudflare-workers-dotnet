@@ -24,10 +24,10 @@ namespace WorkersDotNet.Services
         readonly string HistoryKey = SampleConfig.QueueHistoryKey;
         readonly int HistoryLength = SampleConfig.HistoryLength;
 
-        private readonly IQueueProducer _queue;
+        private readonly Queue _queue;
         private readonly KvStore _kv;
 
-        public QueueSampleService(IQueueProducer queue, KvStore kv)
+        public QueueSampleService(Queue queue, KvStore kv)
         {
             _queue = queue;
             _kv = kv;
@@ -42,8 +42,10 @@ namespace WorkersDotNet.Services
             if (text.Length > MaxTextLength)
                 return new QueueOutcome(null, $"The message is {text.Length} characters, the limit is {MaxTextLength}.", 400);
 
-            var queuedAt = DateTimeOffset.UtcNow.ToString("O");
-            await _queue.SendJsonAsync(new QueuedMessage(text, queuedAt, "", 0));
+            var queuedAt = Clock.NowIso();
+
+            var options = new QueueSendOptions { ContentType = QueueContentType.Json };
+            await _queue.SendAsync(new QueuedMessage(text, queuedAt, "", 0), options);
 
             return new QueueOutcome(
                 new QueueSendResult(true, $"Message added to {QueueName}.", text, queuedAt),

@@ -34,10 +34,10 @@ namespace WorkersDotNet.Auth
             "id, email, display_name AS displayName, " +
             "password_hash AS passwordHash, created_at AS createdAt, updated_at AS updatedAt";
 
-        private readonly D1Database _db;
+        private readonly D1Store _db;
         private readonly string _defaultAdminEmail;
 
-        public AuthService(D1Database db, string defaultAdminEmail)
+        public AuthService(D1Store db, string defaultAdminEmail)
         {
             _db = db;
             _defaultAdminEmail = defaultAdminEmail;
@@ -61,7 +61,7 @@ namespace WorkersDotNet.Auth
         /// </summary>
         public async Task<UserRow?> CreateUserAsync(string email, string displayName, string passwordHash)
         {
-            var now = DateTimeOffset.UtcNow.ToString("O");
+            var now = Clock.NowIso();
 
             var ok = await _db.ExecuteSucceededAsync(
                 _db.Prepare("INSERT INTO users (email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
@@ -76,7 +76,7 @@ namespace WorkersDotNet.Auth
 
         public async Task UpdateDisplayNameAsync(long userId, string displayName)
         {
-            var now = DateTimeOffset.UtcNow.ToString("O");
+            var now = Clock.NowIso();
             await _db.ExecuteAsync(
                 _db.Prepare("UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?")
                     .Bind(displayName, now, userId));
@@ -159,10 +159,10 @@ namespace WorkersDotNet.Auth
         /// <summary>Creates a session token and stores its hash; returns the raw bearer token.</summary>
         public async Task<string> CreateTokenAsync(long userId)
         {
-            var raw = Hex.Encode(Crypto.RandomBytes(32));
+            var raw = Hex.Encode(Crypto.GetRandomValues(new byte[32]));
             var hash = await HashTokenAsync(raw);
-            var now = DateTimeOffset.UtcNow.ToString("O");
-            var expiresAt = DateTimeOffset.UtcNow.AddSeconds(SampleConfig.AuthTokenLifetimeHours * 3600.0).ToUnixTimeMilliseconds();
+            var now = Clock.NowIso();
+            var expiresAt = Clock.NowMs() + (SampleConfig.AuthTokenLifetimeHours * 3600.0 * 1000.0);
 
             await _db.ExecuteAsync(
                 _db.Prepare("INSERT INTO auth_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
@@ -192,7 +192,7 @@ namespace WorkersDotNet.Auth
             if (token is null)
                 return null;
 
-            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var nowMs = Clock.NowMs();
 
             if (token.ExpiresAt <= nowMs)
             {
@@ -203,12 +203,10 @@ namespace WorkersDotNet.Auth
             // Sliding refresh: when a valid token is about to expire (within the
             // next day) it is rolled forward by a full lifetime again, so an
             // active user is never logged out.
-            var refreshThreshold = DateTimeOffset.UtcNow.AddSeconds(24 * 3600.0).ToUnixTimeMilliseconds();
+            var refreshThreshold = Clock.NowMs() + (24 * 3600.0 * 1000.0);
             if (token.ExpiresAt < refreshThreshold)
             {
-                var refreshedExpiry = DateTimeOffset.UtcNow
-                    .AddSeconds(SampleConfig.AuthTokenLifetimeHours * 3600.0)
-                    .ToUnixTimeMilliseconds();
+                var refreshedExpiry = Clock.NowMs() + (SampleConfig.AuthTokenLifetimeHours * 3600.0 * 1000.0);
                 await _db.ExecuteAsync(_db.Prepare("UPDATE auth_tokens SET expires_at = ? WHERE token_hash = ?").Bind(refreshedExpiry, hash));
             }
 
@@ -282,7 +280,7 @@ namespace WorkersDotNet.Auth
 
         static async Task<string> HashTokenAsync(string rawToken)
         {
-            var bytes = await Crypto.DigestTextAsync(DigestAlgorithm.Sha256, rawToken);
+            var bytes = await Crypto.DigestAsync(DigestAlgorithm.Sha256, rawToken);
             return Hex.Encode(bytes);
         }
     }

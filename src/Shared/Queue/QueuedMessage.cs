@@ -24,4 +24,4 @@ public sealed record QueuedMessage(
     string Text,
     string QueuedAtUtc,
     string JobId,
-    long QueuedAtMs);
+    double QueuedAtMs);

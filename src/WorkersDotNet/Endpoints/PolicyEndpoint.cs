@@ -12,7 +12,11 @@ namespace WorkersDotNet
         public async Task<Response> HandleAsync(Request request)
         {
             if (request.Method != "POST")
-                return Results.Error("Method not allowed", 405).WithHeader("allow", "POST");
+            {
+                var notAllowed = Results.Error("Method not allowed", 405);
+                notAllowed.Headers.Set("allow", "POST");
+                return notAllowed;
+            }
 
             if (!HasJsonBody(request))
                 return Results.Error("A bounded JSON body is required", 400);
@@ -30,7 +34,7 @@ namespace WorkersDotNet
             if (!IsValid(input))
                 return Results.Error("Invalid reading", 400);
 
-            return Results.Ok("Reading accepted", request.Path);
+            return Results.Ok("Reading accepted", new Url(request.Url).Pathname);
         }
 
         private bool HasJsonBody(Request request)
@@ -41,11 +45,11 @@ namespace WorkersDotNet
             if (contentType is null || !contentType.StartsWith("application/json") || contentLength is null)
                 return false;
 
-            if (!Regex.IsMatch(contentLength, "^[1-9][0-9]{0,3}$"))
+            if (!Text.IsDigits(contentLength, 1, 4) || contentLength[0] == '0')
                 return false;
 
             return int.Parse(contentLength) <= MaxBodyBytes
-                && request.BodyStream() is not null
+                && request.Body is not null
                 && !request.BodyUsed;
         }
 

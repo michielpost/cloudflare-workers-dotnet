@@ -37,7 +37,7 @@ namespace WorkersDotNet.Services
                 runNumber,
                 cron,
                 scheduledForUtc,
-                DateTimeOffset.UtcNow.ToString("O"),
+                Clock.NowIso(),
                 manual);
 
             await _kv.PutJsonAsync(ResultKey, run);

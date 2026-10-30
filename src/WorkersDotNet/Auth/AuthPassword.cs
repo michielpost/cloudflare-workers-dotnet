@@ -18,7 +18,7 @@ namespace WorkersDotNet
 
         public static async Task<string> HashAsync(string password)
         {
-            var salt = Crypto.RandomBytes(SaltBytes);
+            var salt = Crypto.GetRandomValues(new byte[SaltBytes]);
             var saltHex = Hex.Encode(salt);
             var hashHex = await RoundsAsync(saltHex, password);
             return saltHex + ":" + hashHex;
@@ -43,7 +43,7 @@ namespace WorkersDotNet
             for (var i = 0; i < Iterations; i++)
             {
                 var input = saltHex + ":" + current;
-                var bytes = await Crypto.DigestTextAsync(DigestAlgorithm.Sha256, input);
+                var bytes = await Crypto.DigestAsync(DigestAlgorithm.Sha256, input);
                 current = Hex.Encode(bytes);
             }
 
@@ -53,21 +53,15 @@ namespace WorkersDotNet
         /// <summary>
         /// Compares two equal-length hex strings without short-circuiting on the
         /// first difference, so a timing side channel cannot reveal how much of
-        /// the hash matched.
+        /// the hash matched. The comparison itself is the runtime's
+        /// <c>crypto.subtle.timingSafeEqual</c>, which is constant time.
         /// </summary>
         static bool SecureEquals(string a, string b)
         {
             if (a.Length != b.Length)
                 return false;
 
-            var same = true;
-            for (var i = 0; i < a.Length; i++)
-            {
-                if (a.Substring(i, 1) != b.Substring(i, 1))
-                    same = false;
-            }
-
-            return same;
+            return Crypto.Subtle.TimingSafeEqual(Hex.Decode(a), Hex.Decode(b));
         }
     }
 }

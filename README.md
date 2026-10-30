@@ -20,12 +20,13 @@ is live and clickable.
 ## Highlights
 
 - **C# on the edge** — worker logic is ordinary C#: `async` methods, records, pattern matching,
-  `System.Text.RegularExpressions`, all compiled ahead of time to a single JS module.
-- **ASP.NET-style routing** — a central `switch` router maps URLs to endpoint classes, so a new
-  route is one small class plus one `case`.
+  generics, all compiled ahead of time to a single JS module.
+- **ASP.NET-style routing** — the package's `Router` maps URLs to endpoint classes, so a new route
+  is one small class plus one line in the route table.
 - **First-class response helpers** — `Results.Ok(...)` / `Results.Error(...)` make returning JSON a
   one-liner, the main use case for an API worker.
-- **A dedicated CORS helper** — preflight and response headers handled in one place.
+- **CORS as middleware** — the allow-list is one `Cors.Allow(...)` registration on the router, so
+  preflights and response headers are handled in one place.
 - **Shared models** — the same `ApiResponse` record is used by the worker and the Blazor client.
 - **Every binding, worked through** — Cache API, KV, R2, D1, queue producer *and* consumer, a
   Durable Object, and scheduled triggers, all runnable locally with no Cloudflare account.
@@ -154,42 +155,44 @@ namespace WorkersDotNet
 
         public Task<Response> HandleAsync(Request request)
         {
-            return Task.FromResult(Results.Ok(_greeting.Message(), request.Path));
+            return Task.FromResult(Results.Ok(_greeting.Message(), new Url(request.Url).Pathname));
         }
     }
 }
 ```
 
-**2. Register it** in `Router.cs`:
-
-```csharp
-case "/api/hello":
-    return await _app.Hello.HandleAsync(request);
-```
-
-**3. Wire it up** in `AppServices.cs`, the composition root. It reads the
-environment's bindings once, builds every service, and injects them into the
-endpoints:
+**2. Register it** in `AppServices.cs`, the composition root. It reads the
+environment's bindings once, builds every service, injects them into the
+endpoints, and then adds one line to the route table:
 
 ```csharp
 var hello = new HelloEndpoint(new GreetingService());
 Hello = hello;
+
+router.Any("/api/hello", (request, context) => Hello.HandleAsync(request));
 ```
 
-That is all, the route is now live, CORS headers included for allowed origins.
+That is all, the route is now live, CORS headers included for allowed origins. `router.Any` matches
+every method; use `router.Get` / `router.Post` / `router.Put` / `router.Patch` / `router.Delete` /
+`router.Options` when a route should only answer one. `router.Fallback` catches everything else and
+hands it to the `ASSETS` binding, which is how the Blazor SPA is served.
 
 ## Response helpers
 
 `Results` keeps endpoint bodies short and consistent:
 
 ```csharp
-return Results.Ok("Reading accepted", request.Path);              // 200 + ApiResponse
-return Results.Error("Method not allowed", 405);                  // error body with a requestId
-return Results.Json(new ApiResponse(...), 201);                   // explicit status code
+return Results.Ok("Reading accepted", new Url(request.Url).Pathname);  // 200 + ApiResponse
+return Results.Error("Method not allowed", 405);                       // error body with a requestId
+return Results.Json(new ApiResponse(...), 201);                        // explicit status code
+return Results.Empty(204);                                             // no body
+return Results.NoStore(Response.Json(payload, 200));                   // cache-control: no-store
 ```
 
 `Results.Error` returns `{ "error": "...", "requestId": "..." }`, which makes failures easy to
-correlate with logs.
+correlate with logs. `Results.Empty` and `Results.NoStore` exist because `Response` lost its
+`Empty` / `WithHeader` helpers in `0.6`: a `Response` is now also the init object of
+`new Response(body, init)`, and its `Status` / `Headers` are init-only.
 
 ## CORS
 
@@ -201,10 +204,24 @@ comma-separated `ALLOWED_ORIGINS` variable:
 ALLOWED_ORIGINS = "http://localhost:5217,https://localhost:7000,https://app.example.com"
 ```
 
-The list is compiled into an anchored regular expression (`^(?:a|b)$`), so an origin has to match an
-entry exactly and an empty or missing list grants no cross-origin access at all. `Cors.Apply` and
-`Cors.Preflight` only emit `access-control-allow-origin` when `Cors.AllowedOrigin` accepts the
-requesting origin, which means everything else is left to the browser to block.
+`CorsPolicy.ParseOrigins` splits and trims that list, and `AppServices` hands the result to the
+router's built-in `Cors.Allow` middleware:
+
+```csharp
+router.Use(Cors.Allow(
+    CorsPolicy.ParseOrigins(environment.Variable("ALLOWED_ORIGINS")),
+    CorsPolicy.Methods(),
+    credentials: false,
+    CorsPolicy.RequestHeaders(),
+    CorsPolicy.ExposedHeaders(),
+    CorsPolicy.MaxAgeSeconds));
+```
+
+An origin has to match an entry exactly, and an empty or missing list grants no cross-origin access
+at all. The middleware answers preflights and only emits `access-control-allow-origin` for an
+accepted origin, which means everything else is left to the browser to block. `CorsPolicy.IsCorsFetch`
+tells the endpoints whether a request came from another origin, so they can skip the work a
+preflight already covered.
 
 Where the value is set:
 
@@ -273,18 +290,17 @@ deploy, and the two cron triggers are registered with it. Trigger one on demand 
 The `Workers` compiler is a focused source-to-JavaScript emitter rather than a full .NET runtime.
 It supports the common C# you would expect (`switch` statements, `const string` case labels, static
 helper classes, instance classes with constructor injection, anonymous objects, records, generic
-methods, `foreach`, LINQ-free collection types, `DateTimeOffset`, `Guid`), but a few constructs are
-intentionally out of scope.
+methods, `foreach`, LINQ-free collection types), but a few constructs are intentionally out of scope.
 
 Practical consequences for this codebase:
 
 - **Instance services with constructor injection.** Since `0.4.0` the compiler emits instance
   classes, so endpoints and services are plain `sealed class` instances and receive their
-  dependencies (a `D1Database`, a `KvStore`, a queue binding, ...) through the constructor. Only
-  small pure helpers (`Results`, `AuthPassword`, `Hex`, `Cors`) stay `static`. `AppServices.cs` is
-  the composition root: it reads the environment's bindings once and builds every service and
-  endpoint.
-- **Helper services wrap the bindings.** `D1Database` wraps the `D1` binding (parameterised
+  dependencies (a `D1Store`, a `KvStore`, a queue binding, ...) through the constructor. Only
+  small pure helpers (`Results`, `AuthPassword`, `Clock`, `Text`, `CorsPolicy`) stay `static`.
+  `AppServices.cs` is the composition root: it reads the environment's bindings once and builds
+  every service and endpoint.
+- **Helper services wrap the bindings.** `D1Store` wraps the `D1` binding (parameterised
   `QueryAsync` / `FirstAsync<T>` / `AllAsync<T>` / `ExecuteAsync`) and `KvStore` wraps the `KV`
   binding (`GetJsonAsync<T>` / `PutJsonAsync<T>`), so services never touch the raw bindings.
 - **Bindings are injected, not passed per call.** A service takes the bindings it needs once in its
@@ -292,29 +308,56 @@ Practical consequences for this codebase:
 - **No `static` fields, `const` is fine.** A `const string X = SampleConfig.Foo;` inlines to a
   literal; a non-constant static field is a compile error (`WRK119`/`WRK116`). Use instance
   `readonly` fields for values that are fixed per instance.
-- **No casts or `default` literals.** Cast expressions (`(ulong)x`) and `default` / `Array.Empty`
-  are out of scope, so type the fields to match (e.g. the R2 size limit is a `ulong`) and use
-  `return null;` with a `where T : class` constraint instead of `default`.
+- **No casts or `default` literals.** Cast expressions (`(long)x`) and `default` / `Array.Empty`
+  are out of scope, so type the fields to match and use `return null;` with a `where T : class`
+  constraint instead of `default`.
 - **Nested types are not allowed.** A `record` nested inside a user class is a compile error
   (`WRK119`). Declare them at namespace level instead.
 - **No `params` / `ref` / `out` / `in`.** Method arguments must be plain; D1 helpers take an
   explicit `object[] args`, built with a collection expression `[a, b, c]` (the `new object[] { }`
   form is also rejected).
-- **No property initializers.** Assign read-only properties in the constructor rather than
-  initialising them inline.
-- **A response body can only be read once.** `WithHeader` / `WithoutHeader` rebuild a `Response`
-  from `response.body`, so chaining them onto one object throws `TypeError: This ReadableStream is
-  disturbed`. The cache sample therefore builds a separate `Response` for the copy it stores and for
-  the copy it returns.
-- **Keep the router thin.** All logic lives in the endpoint classes, so the router stays a readable
-  index of the worker's URLs.
+- **Object initializers are required for init-only properties.** `Response`, `RequestInit`,
+  `QueueSendOptions`, `R2PutOptions`, `R2HttpMetadata` and `MessageSendRequest<T>` all expose
+  init-only properties in `0.6`, so they are built with `new X { ... }` rather than by assigning
+  afterwards. Read-only properties on your own types are still assigned in the constructor.
+- **A response body can only be read once.** A `Response` is also the init object of
+  `new Response(body, init)`, and reading `response.Body` twice throws
+  `TypeError: This ReadableStream is disturbed`. The cache sample therefore builds a separate
+  `Response` for the copy it stores and for the copy it returns.
+- **Keep the router thin.** All logic lives in the endpoint classes, so the route table in
+  `AppServices.cs` stays a readable index of the worker's URLs.
 - **One queue and one scheduled handler per worker.** The compiler allows a single `[Queue]` and a
   single `[Scheduled]` method, so `WorkerEvents.cs` reads `batch.Queue` / `scheduled.Cron` and
   dispatches internally. That is why both crons and both queues live in one file.
-- **Durable Object methods are the RPC surface.** Every public method on `RateGate` becomes a public
-  method of the object, so the worker-side helpers are private and only `reserve`, `complete` and
-  `peek` are callable.
+- **Durable Objects derive from `DurableObject`.** Since `0.6` there is no `[DurableObject]`
+  attribute: `RateGate` derives from the `DurableObject` base class, which supplies `Ctx` and `Env`,
+  so it needs no constructor. Every public method becomes part of the object's RPC surface, so the
+  worker-side helpers are private and only `reserve`, `complete` and `peek` are callable.
 - **`dist/` is generated.** It is gitignored; never edit it by hand.
+
+### The supported C# profile
+
+The compiler enforces a restricted profile (`WRK105`) and rejects a surprising amount of the BCL.
+These are the ones that bite in practice:
+
+| Not available | Use instead |
+| ------------- | ----------- |
+| `DateTimeOffset` (all members) | `Clock.NowMs()` / `Clock.NowIso()`, built on the runtime's `Date` |
+| `Guid.NewGuid()` | `Crypto.RandomUuid()` |
+| `Random.Shared` | `Crypto.GetRandomValues(new byte[4])` (see `TelemetryService.RandomUnit`) |
+| `Regex` | hand-written checks (see `Text.IsDigits`) |
+| `Math.Max` / `Math.Min` | a comparison, or `if` |
+| `char.IsDigit` | `c >= '0' && c <= '9'` |
+| `string.Format` | string interpolation |
+| `double.ToString("F2")` | `double.ToString()` |
+| `Convert.ToInt64` | keep the value as a `double` |
+
+`Date.Now()` returns a JavaScript number, and there is no supported way to turn it into a `long`
+(no cast, no `Convert`), so every unix-millisecond value in this codebase is a `double` — including
+the fields in `src/Shared` that the Blazor frontend reads. `Clock` is the single place that reads
+the clock, so the rest of the worker never touches `Date` directly.
+
+`Log.Info` / `Log.Warn` / `Log.Error` replace `Console.WriteLine` and show up in `wrangler tail`.
 
 ## Credits
 
@@ -322,7 +365,7 @@ This project builds on the excellent **Workers** package and sample collection b
 **[Iñigo Ruiz-Salinas](https://github.com/iruizsalinas)** — **<https://github.com/iruizsalinas/workers>**.
 
 That repository provides the C#-to-Cloudflare-Workers compiler and the samples that made this
-approach possible. The NuGet package `Workers` (`0.4.0`) used under `src/WorkersDotNet` comes from
+approach possible. The NuGet package `Workers` (`0.6.3`) used under `src/WorkersDotNet` comes from
 there, and its description sums it up well: _"Compile a focused C# profile directly to minimal
 Cloudflare Workers JavaScript."_ If you want to understand how C# is compiled for the edge, or see
 many more worked examples than the handful here, start there.
