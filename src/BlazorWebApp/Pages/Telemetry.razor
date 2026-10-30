@@ -419,7 +419,7 @@
         return $"held by {Short(status.Gate.Owner)}";
     }
 
-    string NextReadText(long nextReadAtMs)
+    string NextReadText(double nextReadAtMs)
     {
         if (nextReadAtMs <= 0)
             return "due now";
@@ -435,7 +435,7 @@
 
     static string Short(string id) => id.Length > 8 ? id.Substring(0, 8) : id;
 
-    static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    static double NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     static string JobBadge(string status) => status switch
     {

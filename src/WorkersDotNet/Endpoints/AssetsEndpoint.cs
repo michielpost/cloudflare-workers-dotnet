@@ -6,9 +6,9 @@ namespace WorkersDotNet
     public sealed class AssetsEndpoint
     {
         // Serve the BlazorWebApp as static files via the ASSETS binding.
-        private readonly IFetcherBinding _assets;
+        private readonly Fetcher _assets;
 
-        public AssetsEndpoint(IFetcherBinding assets)
+        public AssetsEndpoint(Fetcher assets)
         {
             _assets = assets;
         }

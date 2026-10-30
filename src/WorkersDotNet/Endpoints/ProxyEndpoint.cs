@@ -7,9 +7,10 @@ namespace WorkersDotNet
     {
         public async Task<Response> HandleAsync(Request request)
         {
-            var target = request.QueryParameters.Get("url") ?? "https://example.com";
+            var target = new Url(request.Url).SearchParams.Get("url") ?? "https://example.com";
             var proxied = await Http.FetchAsync(target);
-            return proxied.WithHeader("x-proxied-by", "Workers");
+            proxied.Headers.Set("x-proxied-by", "Workers");
+            return proxied;
         }
     }
 }

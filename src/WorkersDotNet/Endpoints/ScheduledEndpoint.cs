@@ -25,12 +25,11 @@ namespace WorkersDotNet
             {
                 await _scheduled.WriteRunAsync(
                     SampleConfig.ScheduledCron,
-                    DateTimeOffset.UtcNow.ToString("O"),
+                    Clock.NowIso(),
                     true);
             }
 
-            return Response.Json(await _scheduled.ReadStatusAsync(), 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(await _scheduled.ReadStatusAsync(), 200));
         }
     }
 }

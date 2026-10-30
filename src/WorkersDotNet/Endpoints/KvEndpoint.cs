@@ -25,8 +25,7 @@ namespace WorkersDotNet
                 return await WriteAsync(request);
 
             var snapshot = await _kv.ReadAsync();
-            return Response.Json(snapshot, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(snapshot, 200));
         }
 
         async Task<Response> WriteAsync(Request request)
@@ -48,8 +47,7 @@ namespace WorkersDotNet
             if (result.Error is not null)
                 return Results.Error(result.Error, result.Status);
 
-            return Response.Json(result.Result, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(result.Result, 200));
         }
     }
 }

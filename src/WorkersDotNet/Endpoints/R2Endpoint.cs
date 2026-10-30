@@ -26,8 +26,7 @@ namespace WorkersDotNet
                 return await UploadAsync(request);
 
             var info = await _r2.DescribeAsync();
-            return Response.Json(info, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(info, 200));
         }
 
         /// <summary>Streams the stored object back to the client.</summary>
@@ -42,11 +41,14 @@ namespace WorkersDotNet
             item.WriteHttpMetadata(headers);
             headers.Set("content-disposition", $"attachment; filename=\"{_r2.ObjectName}\"");
             headers.Set("cache-control", "no-store");
+            headers.Set("etag", item.HttpEtag);
+            headers.Set("x-r2-bucket", SampleConfig.R2BucketName);
+            headers.Set("x-r2-key", item.Key);
 
-            return Response.FromStream(item.Body, headers)
-                .WithHeader("etag", item.HttpEtag)
-                .WithHeader("x-r2-bucket", SampleConfig.R2BucketName)
-                .WithHeader("x-r2-key", item.Key);
+            // A Response is now also the ResponseInit of the next Response, so the
+            // headers are attached by building the init first.
+            var init = new Response(null) { Headers = headers };
+            return new Response(item.Body, init);
         }
 
         public async Task<Response> DeleteAsync(Request request)
@@ -54,10 +56,9 @@ namespace WorkersDotNet
             await _r2.DeleteAsync();
 
             var info = await _r2.DescribeAsync();
-            return Response.Json(
-                    new R2MutationResult(true, $"Deleted {_r2.ObjectName} from {SampleConfig.R2BucketName}.", info),
-                    200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(
+                new R2MutationResult(true, $"Deleted {_r2.ObjectName} from {SampleConfig.R2BucketName}.", info),
+                200));
         }
 
         async Task<Response> UploadAsync(Request request)
@@ -65,10 +66,10 @@ namespace WorkersDotNet
             // Content-Length is only a pre-check: the size of the stored object
             // is verified in the service, because the header cannot be trusted.
             var declared = request.Headers.Get("content-length");
-            if (declared is not null && Regex.IsMatch(declared, "^[0-9]{1,9}$") && int.Parse(declared) > SampleConfig.R2MaxBytes)
+            if (declared is not null && Text.IsDigits(declared, 1, 9) && int.Parse(declared) > SampleConfig.R2MaxBytes)
                 return Results.Error($"The upload is {declared} bytes, the limit is {SampleConfig.R2MaxBytes} bytes.", 413);
 
-            var body = request.BodyStream();
+            var body = request.Body;
             if (body is null)
                 return Results.Error("The request body is empty.", 400);
 
@@ -80,8 +81,7 @@ namespace WorkersDotNet
             if (result.Error is not null)
                 return Results.Error(result.Error, result.Status);
 
-            return Response.Json(result.Result, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(result.Result, 200));
         }
     }
 }

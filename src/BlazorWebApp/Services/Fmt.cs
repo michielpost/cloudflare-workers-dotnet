@@ -57,23 +57,24 @@ public static class Fmt
 
     /// <summary>
     /// Renders one of the worker's unix-millisecond timestamps as local time.
-    /// The D1 rows store integers, so <see cref="Local"/> cannot be used for them.
+    /// The worker sends them as JavaScript numbers, so they arrive as
+    /// <c>double</c>.
     /// </summary>
-    public static string Clock(long unixMilliseconds, string format = "HH:mm:ss")
+    public static string Clock(double unixMilliseconds, string format = "HH:mm:ss")
         => unixMilliseconds <= 0
             ? "—"
-            : DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds)
+            : DateTimeOffset.FromUnixTimeMilliseconds((long)unixMilliseconds)
                 .ToLocalTime()
                 .ToString(format, CultureInfo.InvariantCulture);
 
     /// <summary>How long ago one of the worker's unix-millisecond timestamps was.</summary>
-    public static string AgoMs(long unixMilliseconds)
+    public static string AgoMs(double unixMilliseconds)
         => unixMilliseconds <= 0
             ? "—"
-            : Ago(DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds));
+            : Ago(DateTimeOffset.FromUnixTimeMilliseconds((long)unixMilliseconds));
 
     /// <summary>Time between two unix-millisecond timestamps, e.g. "412 ms".</summary>
-    public static string BetweenMs(long fromMilliseconds, long toMilliseconds)
+    public static string BetweenMs(double fromMilliseconds, double toMilliseconds)
     {
         if (fromMilliseconds <= 0 || toMilliseconds <= 0)
             return "—";
@@ -81,7 +82,7 @@ public static class Fmt
         var elapsed = Math.Max(0, toMilliseconds - fromMilliseconds);
 
         return elapsed < 1000
-            ? $"{elapsed} ms"
+            ? $"{elapsed:0} ms"
             : $"{elapsed / 1000.0:0.00} s";
     }
 }

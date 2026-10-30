@@ -15,22 +15,22 @@ namespace WorkersDotNet.Services
     public sealed class R2SampleService
     {
 
-        readonly ulong MaxBytes = SampleConfig.R2MaxBytes;
+        readonly long MaxBytes = SampleConfig.R2MaxBytes;
         readonly string BucketName = SampleConfig.R2BucketName;
         readonly string ObjectKey = SampleConfig.R2ObjectKey;
 
         /// <summary>The name of the stored object, for messages and the download name.</summary>
         public string ObjectName { get; }
 
-        private readonly IR2Bucket _r2;
+        private readonly R2Bucket _r2;
 
-        public R2SampleService(IR2Bucket r2)
+        public R2SampleService(R2Bucket r2)
         {
             _r2 = r2;
             ObjectName = SampleConfig.R2ObjectKey;
         }
 
-        public Task<R2ObjectBody?> GetObjectAsync() => _r2.GetObjectAsync(ObjectKey);
+        public Task<R2ObjectBody?> GetObjectAsync() => _r2.GetAsync(ObjectKey);
 
         public Task DeleteAsync() => _r2.DeleteAsync(ObjectKey);
 
@@ -41,10 +41,11 @@ namespace WorkersDotNet.Services
         /// </summary>
         public async Task<R2Outcome> UploadAsync(ReadableStream body, string contentType)
         {
-            var stored = await _r2.PutObjectAsync(
-                ObjectKey,
-                body,
-                new R2PutOptions { HttpMetadata = new R2HttpMetadata(ContentType: contentType) });
+            var metadata = new R2HttpMetadata { ContentType = contentType };
+
+            var options = new R2PutOptions { HttpMetadata = metadata };
+
+            var stored = await _r2.PutAsync(ObjectKey, body, options);
 
             if (stored is null)
                 return new R2Outcome(null, "The upload could not be stored in R2.", 500);
@@ -84,7 +85,7 @@ namespace WorkersDotNet.Services
                 item.Size,
                 MaxBytes,
                 contentType,
-                item.Uploaded.ToString("O"),
+                item.Uploaded.ToIsoString(),
                 item.HttpEtag);
         }
     }

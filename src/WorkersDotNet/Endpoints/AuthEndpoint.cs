@@ -70,8 +70,7 @@ namespace WorkersDotNet
 
             var token = await _auth.CreateTokenAsync(user.Id);
             var authUser = await _auth.ToAuthUserAsync(user);
-            return Response.Json(new AuthResponse(token, authUser), 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(new AuthResponse(token, authUser), 200));
         }
 
         /// <summary>POST /api/auth/login - verifies credentials and signs the user in.</summary>
@@ -109,8 +108,7 @@ namespace WorkersDotNet
 
             var token = await _auth.CreateTokenAsync(user.Id);
             var authUser = await _auth.ToAuthUserAsync(user);
-            return Response.Json(new AuthResponse(token, authUser), 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(new AuthResponse(token, authUser), 200));
         }
 
         /// <summary>GET /api/auth/me - returns the caller's identity from their bearer token.</summary>
@@ -125,8 +123,7 @@ namespace WorkersDotNet
                 return Results.Error("Not signed in", 401);
 
             var authUser = await _auth.ToAuthUserAsync(user);
-            return Response.Json(authUser, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(authUser, 200));
         }
 
         /// <summary>POST /api/auth/profile - updates the caller's own display name.</summary>
@@ -161,8 +158,7 @@ namespace WorkersDotNet
             await _auth.UpdateDisplayNameAsync(user.Id, displayName);
             var fresh = await _auth.FindUserByIdAsync(user.Id);
             var authUser = await _auth.ToAuthUserAsync(fresh!);
-            return Response.Json(authUser, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(authUser, 200));
         }
 
         /// <summary>POST /api/auth/logout - invalidates the caller's session token.</summary>
@@ -173,7 +169,7 @@ namespace WorkersDotNet
 
             var token = BearerToken(request);
             await _auth.DeleteTokenAsync(token);
-            return Results.Ok("Signed out.", request.Path);
+            return Results.Ok("Signed out.", new Url(request.Url).Pathname);
         }
 
         /// <summary>GET /api/auth/users - admin only: all users with their roles.</summary>
@@ -188,8 +184,7 @@ namespace WorkersDotNet
 
             var users = await _auth.GetAllUsersAsync();
             var roles = await _auth.GetAllRolesAsync();
-            return Response.Json(new UsersSnapshot(users, roles), 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(new UsersSnapshot(users, roles), 200));
         }
 
         /// <summary>POST /api/auth/roles - admin only: replaces one user's roles.</summary>
@@ -230,8 +225,7 @@ namespace WorkersDotNet
             await _auth.AssignRolesAsync(target.Id, roles);
 
             var updated = await _auth.ToAuthUserAsync(target);
-            return Response.Json(updated, 200)
-                .WithHeader("cache-control", "no-store");
+            return Results.NoStore(Response.Json(updated, 200));
         }
 
         /// <summary>

@@ -27,13 +27,13 @@ namespace WorkersDotNet
         /// </summary>
         [Queue]
         public static async Task ConsumeAsync(
-            QueueMessageBatch<QueuedMessage> batch,
+            MessageBatch<QueuedMessage> batch,
             Env environment,
-            Context context)
+            ExecutionContext context)
         {
             var app = new AppServices(environment);
 
-            Console.WriteLine($"Queue consumer received {batch.Count} message(s) from {batch.Queue}");
+            Log.Info($"Queue consumer received {batch.Messages.Count} message(s) from {batch.Queue}");
 
             if (batch.Queue == SampleConfig.TelemetryQueueName)
             {
@@ -41,18 +41,18 @@ namespace WorkersDotNet
                 return;
             }
 
-            foreach (var message in batch)
+            foreach (var message in batch.Messages)
             {
                 var record = new QueueRecord(
                     message.Body.Text,
                     message.Body.QueuedAtUtc,
-                    DateTimeOffset.UtcNow.ToString("O"),
+                    Clock.NowIso(),
                     message.Id);
 
                 await app.QueueSample.WriteQueueResultAsync(record);
                 message.Ack();
 
-                Console.WriteLine($"Queue consumer stored \"{record.Text}\" ({record.MessageId})");
+                Log.Info($"Queue consumer stored \"{record.Text}\" ({record.MessageId})");
             }
         }
 
@@ -62,9 +62,9 @@ namespace WorkersDotNet
         /// is only acked once it either succeeded or ran out of attempts. One bad
         /// sensor therefore never blocks the rest of the batch.
         /// </summary>
-        static async Task ConsumeTelemetryAsync(QueueMessageBatch<QueuedMessage> batch, AppServices app)
+        static async Task ConsumeTelemetryAsync(MessageBatch<QueuedMessage> batch, AppServices app)
         {
-            foreach (var message in batch)
+            foreach (var message in batch.Messages)
             {
                 var attempts = message.Attempts;
 
@@ -81,13 +81,13 @@ namespace WorkersDotNet
 
                     if (attempts < SampleConfig.TelemetryMaxAttempts)
                     {
-                        Console.Error.WriteLine($"Telemetry job {message.Body.JobId} failed on attempt {attempts}, retrying in {delay}s: {exception.Message}");
+                        Log.Error($"Telemetry job {message.Body.JobId} failed on attempt {attempts}, retrying in {delay}s: {exception.Message}");
                         await app.TelemetryService.MarkJobAsync(message.Body.JobId, "retrying", attempts, exception.Message);
                         message.Retry(new QueueRetryOptions { DelaySeconds = delay });
                     }
                     else
                     {
-                        Console.Error.WriteLine($"Telemetry job {message.Body.JobId} failed {attempts} times and is given up: {exception.Message}");
+                        Log.Error($"Telemetry job {message.Body.JobId} failed {attempts} times and is given up: {exception.Message}");
                         await app.TelemetryService.MarkJobAsync(message.Body.JobId, "failed", attempts, exception.Message);
                         message.Ack();
                     }
@@ -101,11 +101,11 @@ namespace WorkersDotNet
         /// returns, so it is handed to <c>context.WaitUntil</c>.
         /// </summary>
         [Scheduled]
-        public static void OnSchedule(ScheduledEvent scheduled, Env environment, Context context)
+        public static void OnSchedule(ScheduledController scheduled, Env environment, ExecutionContext context)
         {
             var app = new AppServices(environment);
 
-            Console.WriteLine($"Scheduled task {scheduled.Cron} fired for {scheduled.ScheduledTime:O}");
+            Log.Info($"Scheduled task {scheduled.Cron} fired for {scheduled.ScheduledTime.ToIsoString()}");
 
             if (scheduled.Cron == SampleConfig.TelemetryCron)
             {
@@ -116,7 +116,7 @@ namespace WorkersDotNet
             context.WaitUntil(
                 app.ScheduledSample.WriteRunAsync(
                     scheduled.Cron,
-                    scheduled.ScheduledTime.ToString("O"),
+                    scheduled.ScheduledTime.ToIsoString(),
                     false));
         }
     }

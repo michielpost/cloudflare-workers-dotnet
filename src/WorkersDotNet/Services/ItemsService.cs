@@ -24,9 +24,9 @@ namespace WorkersDotNet.Services
         readonly string Columns =
             "id, title, notes, status, created_at AS createdAtUtc, updated_at AS updatedAtUtc";
 
-        private readonly D1Database _db;
+        private readonly D1Store _db;
 
-        public ItemsService(D1Database db)
+        public ItemsService(D1Store db)
         {
             _db = db;
         }
@@ -58,7 +58,7 @@ namespace WorkersDotNet.Services
             if (problem is not null)
                 return new ItemsOutcome(null, problem, 400);
 
-            var now = DateTimeOffset.UtcNow.ToString("O");
+            var now = Clock.NowIso();
             await _db.ExecuteAsync(
                 _db.Prepare(
                     "INSERT INTO items (title, notes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
@@ -91,7 +91,7 @@ namespace WorkersDotNet.Services
             if (existing is null)
                 return new ItemsOutcome(null, $"Item #{input.Id} does not exist.", 404);
 
-            var now = DateTimeOffset.UtcNow.ToString("O");
+            var now = Clock.NowIso();
             await _db.ExecuteAsync(
                 _db.Prepare("UPDATE items SET title = ?, notes = ?, status = ?, updated_at = ? WHERE id = ?")
                     .Bind(title, notes, status, now, input.Id));
