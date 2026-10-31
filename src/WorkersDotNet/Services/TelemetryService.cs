@@ -39,13 +39,24 @@ namespace WorkersDotNet.Services
         /// Queues one job for every sensor that is due. This is the whole of the
         /// cron trigger's work, which is why the trigger and the button share it.
         /// </summary>
-        public async Task<List<string>> EnqueueDueAsync()
+        /// <param name="scheduledTimeMs">
+        /// The cron trigger's scheduled time, in Unix milliseconds. The next read
+        /// is measured from this instead of from the wall clock, so a trigger that
+        /// fires a few milliseconds early cannot push the sensor's schedule past
+        /// the following trigger. Without it the interval drifts: a 5-minute
+        /// sensor whose trigger lands 1ms early is skipped on every other run and
+        /// ends up reading every 10 minutes.
+        /// </param>
+        public async Task<List<string>> EnqueueDueAsync(double? scheduledTimeMs = null)
         {
             var now = Clock.NowMs();
+            var anchor = scheduledTimeMs ?? now;
 
+            // A small tolerance keeps a trigger that fires a few milliseconds
+            // early from skipping a sensor that is due on the same second.
             var due = await _db.AllAsync<DueSensor>(
                 _db.Prepare($"SELECT sensor_id AS sensorId, interval_minutes AS intervalMinutes FROM sensors WHERE active = 1 AND next_read_at <= ? ORDER BY next_read_at LIMIT {BatchSize}")
-                    .Bind(now));
+                    .Bind(now + 5000.0));
 
             var sensorIds = new List<string>();
             var messages = new List<MessageSendRequest<QueuedMessage>>();
@@ -60,7 +71,7 @@ namespace WorkersDotNet.Services
 
                 await _db.ExecuteAsync(
                     _db.Prepare("UPDATE sensors SET next_read_at = ? WHERE sensor_id = ?")
-                        .Bind(now + (sensor.IntervalMinutes * 60.0 * 1000.0), sensor.SensorId));
+                        .Bind(anchor + (sensor.IntervalMinutes * 60.0 * 1000.0), sensor.SensorId));
 
                 var request = new MessageSendRequest<QueuedMessage>
                 {
@@ -151,7 +162,7 @@ namespace WorkersDotNet.Services
                 _db.Prepare("INSERT OR REPLACE INTO readings (id, sensor_id, temperature, air_quality, condition, source, reading_at, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                     .Bind(message.JobId, message.Text, temperature, airQuality, condition, source, readingAt, processedAt));
 
-            await MarkJobAsync(message.JobId, "done", attempts, "");
+            await MarkJobAsync(message.JobId, message.Text, "done", attempts, "");
 
             await _gateNs.GetByName(GateName).InvokeAsync("complete", lease.Token);
 
@@ -159,11 +170,22 @@ namespace WorkersDotNet.Services
         }
 
         /// <summary>Records how a job ended, so the UI can show its state.</summary>
-        public async Task MarkJobAsync(string jobId, string status, int attempts, string error)
+        public async Task MarkJobAsync(string jobId, string sensorId, string status, int attempts, string error)
         {
-            await _db.ExecuteAsync(
+            var processedAt = Clock.NowMs();
+
+            var changed = await _db.ExecuteChangesAsync(
                 _db.Prepare("UPDATE jobs SET status = ?, attempts = ?, last_error = ?, processed_at = ? WHERE id = ?")
-                    .Bind(status, attempts, error, Clock.NowMs(), jobId));
+                    .Bind(status, attempts, error, processedAt, jobId));
+
+            if (changed != 0)
+                return;
+
+            // The job row was pruned while its message was still in the queue.
+            // Put it back so the reading it produced is still counted.
+            await _db.ExecuteAsync(
+                _db.Prepare("INSERT OR REPLACE INTO jobs (id, sensor_id, status, attempts, last_error, queued_at, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                    .Bind(jobId, sensorId, status, attempts, error, processedAt, processedAt));
         }
 
         /// <summary>Makes every sensor due again (POST /api/telemetry/reset).</summary>
@@ -172,14 +194,110 @@ namespace WorkersDotNet.Services
             await _db.ExecuteAsync(_db.Prepare("UPDATE sensors SET active = 1, next_read_at = 0"));
         }
 
+        /// <summary>
+        /// Deletes every reading and job from before the current UTC day, plus
+        /// any job that has been stuck in the queue for longer than
+        /// <see cref="SampleConfig.TelemetryStaleJobMinutes"/>. The cron trigger
+        /// runs this after queuing, so the tables only ever hold today's rows and
+        /// a status read can never grow with the age of the demo.
+        /// </summary>
+        public async Task PruneAsync()
+        {
+            var now = Clock.NowMs();
+            var dayMs = 24.0 * 60.0 * 60.0 * 1000.0;
+            var startOfDay = now - (now % dayMs);
+
+            // The first run after a deploy can have weeks of rows to remove, so
+            // delete in bounded chunks instead of one unbounded statement.
+            await DeleteInChunksAsync("readings", "reading_at", startOfDay);
+            await DeleteInChunksAsync("jobs", "queued_at", startOfDay);
+
+            var staleCutoff = now - (SampleConfig.TelemetryStaleJobMinutes * 60.0 * 1000.0);
+            await _db.ExecuteAsync(
+                _db.Prepare("DELETE FROM jobs WHERE status IN ('queued', 'retrying') AND queued_at < ?").Bind(staleCutoff));
+
+            Log.Info($"Telemetry: pruned rows from before {SampleConfig.TelemetryRetentionDays} day(s)");
+        }
+
+        /// <summary>Deletes rows older than <paramref name="cutoff"/> in batches.</summary>
+        async Task DeleteInChunksAsync(string table, string timeColumn, double cutoff)
+        {
+            for (var pass = 0; pass < 20; pass++)
+            {
+                var removed = await _db.ExecuteChangesAsync(
+                    _db.Prepare($"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {timeColumn} < ? LIMIT 5000)")
+                        .Bind(cutoff));
+
+                if (removed < 5000)
+                    return;
+            }
+        }
+
         /// <summary>Everything GET /api/telemetry returns.</summary>
+        /// <remarks>
+        /// One aggregate query and two bounded lists, so the cost depends on the
+        /// retention window rather than on how many readings have ever been
+        /// stored. The previous version ran a correlated COUNT per sensor plus
+        /// five separate COUNT(*) queries, which made one read cost
+        /// O(sensors x readings) rows - the reason a few hundred requests could
+        /// exhaust the D1 free tier.
+        /// </remarks>
         public async Task<TelemetryStatus> ReadStatusAsync()
         {
-            var sensors = await _db.AllAsync<SensorInfo>(
-                _db.Prepare("SELECT s.sensor_id AS sensorId, s.name, s.latitude, s.longitude, s.interval_minutes AS intervalMinutes, s.next_read_at AS nextReadAtMs, s.active,"
-                + " (SELECT COUNT(*) FROM readings r WHERE r.sensor_id = s.sensor_id) AS reads,"
-                + " (SELECT COUNT(*) FROM jobs j WHERE j.sensor_id = s.sensor_id AND j.status <> 'done' AND j.status <> 'failed') AS pending"
-                + " FROM sensors s ORDER BY s.sensor_id"));
+            var sensorRows = await _db.AllAsync<SensorRow>(
+                _db.Prepare("SELECT sensor_id AS sensorId, name, latitude, longitude, interval_minutes AS intervalMinutes, next_read_at AS nextReadAtMs, active FROM sensors ORDER BY sensor_id"));
+
+            // Every stored reading is written by a job that then moves to 'done',
+            // so the done count is the reading count. Counting jobs instead of
+            // readings keeps this to one aggregate over one table.
+            var jobRows = await _db.AllAsync<JobStatusCount>(
+                _db.Prepare("SELECT sensor_id AS sensorId, status, COUNT(*) AS jobCount, COALESCE(SUM(attempts), 0) AS attempts FROM jobs GROUP BY sensor_id, status"));
+
+            var sensors = new List<SensorInfo>();
+            var totalReadings = 0;
+            foreach (var row in sensorRows)
+            {
+                var reads = 0;
+                var pending = 0;
+                foreach (var job in jobRows)
+                {
+                    if (job.SensorId != row.SensorId)
+                        continue;
+
+                    if (job.Status == "done")
+                        reads += job.JobCount;
+                    else if (job.Status != "failed")
+                        pending += job.JobCount;
+                }
+
+                sensors.Add(new SensorInfo(
+                    row.SensorId,
+                    row.Name,
+                    row.Latitude,
+                    row.Longitude,
+                    row.IntervalMinutes,
+                    row.NextReadAtMs,
+                    row.Active,
+                    reads,
+                    pending));
+                totalReadings += reads;
+            }
+
+            var queued = 0;
+            var done = 0;
+            var failed = 0;
+            var attempts = 0;
+            foreach (var job in jobRows)
+            {
+                attempts += job.Attempts;
+
+                if (job.Status == "done")
+                    done += job.JobCount;
+                else if (job.Status == "failed")
+                    failed += job.JobCount;
+                else
+                    queued += job.JobCount;
+            }
 
             var readings = await _db.AllAsync<ReadingInfo>(
                 _db.Prepare($"SELECT id, sensor_id AS sensorId, temperature, air_quality AS airQuality, condition, source, reading_at AS readingAtMs, processed_at AS processedAtMs FROM readings ORDER BY reading_at DESC, id LIMIT {ReadingLimit}"));
@@ -187,13 +305,7 @@ namespace WorkersDotNet.Services
             var jobs = await _db.AllAsync<JobInfo>(
                 _db.Prepare($"SELECT id, sensor_id AS sensorId, status, attempts, last_error AS lastError, queued_at AS queuedAtMs, processed_at AS processedAtMs FROM jobs ORDER BY queued_at DESC LIMIT {JobLimit}"));
 
-            var stats = new PipelineStats(
-                sensors.Count,
-                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM readings")),
-                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM jobs WHERE status = 'queued' OR status = 'retrying'")),
-                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM jobs WHERE status = 'done'")),
-                await _db.CountAsync(_db.Prepare("SELECT COUNT(*) AS value FROM jobs WHERE status = 'failed'")),
-                await _db.CountAsync(_db.Prepare("SELECT COALESCE(SUM(attempts), 0) AS value FROM jobs")));
+            var stats = new PipelineStats(sensors.Count, totalReadings, queued, done, failed, attempts);
 
             var gate = await ReadGateAsync();
 
@@ -289,4 +401,17 @@ namespace WorkersDotNet.Services
             return "unknown";
         }
     }
+
+    /// <summary>One sensor, from the status query.</summary>
+    public sealed record SensorRow(
+        string SensorId,
+        string Name,
+        double Latitude,
+        double Longitude,
+        int IntervalMinutes,
+        double NextReadAtMs,
+        int Active);
+
+    /// <summary>One (sensor, status) bucket of the job rollup.</summary>
+    public sealed record JobStatusCount(string SensorId, string Status, int JobCount, int Attempts);
 }

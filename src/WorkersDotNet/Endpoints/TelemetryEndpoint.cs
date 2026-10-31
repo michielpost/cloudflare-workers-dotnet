@@ -23,15 +23,30 @@ namespace WorkersDotNet
         }
 
         /// <summary>GET returns the pipeline state, POST runs the cron work now.</summary>
-        public async Task<Response> HandleAsync(Request request)
+        public async Task<Response> HandleAsync(Request request, ExecutionContext context)
         {
             if (request.Method == "POST")
-                return await RunAsync();
+                return await RunAsync(request, context);
 
             if (request.Method != "GET")
                 return Results.Error("Only GET and POST are supported on /api/telemetry", 405);
 
-            return Results.NoStore(Response.Json(await _telemetry.ReadStatusAsync(), 200));
+            var key = ResponseCache.KeyFor(request, "/api/telemetry");
+
+            var cached = await ResponseCache.MatchAsync(key);
+            if (cached is not null)
+                return cached;
+
+            var status = await _telemetry.ReadStatusAsync();
+
+            // The stored copy needs a cacheable "cache-control"; the client copy
+            // is "no-store" so the browser always asks the worker.
+            ResponseCache.Store(context, key, Response.Json(status, 200), SampleConfig.TelemetryStatusCacheSeconds);
+
+            var response = Response.Json(status, 200);
+            response.Headers.Set("x-cache", "miss");
+            response.Headers.Set("cache-control", "no-store");
+            return response;
         }
 
         /// <summary>
@@ -39,10 +54,15 @@ namespace WorkersDotNet
         /// with the state of the pipeline. Local development has no cron
         /// scheduler, so the UI calls this to start a run by hand.
         /// </summary>
-        public async Task<Response> RunAsync()
+        public async Task<Response> RunAsync(Request request, ExecutionContext context)
         {
+            if (request.Method != "POST")
+                return Results.Error("Only POST is supported on /api/telemetry/run", 405);
+
             var sensorIds = await _telemetry.EnqueueDueAsync();
             var status = await _telemetry.ReadStatusAsync();
+
+            await ResponseCache.PurgeAsync(ResponseCache.KeyFor(request, "/api/telemetry"));
 
             var message = sensorIds.Count == 0
                 ? $"No sensor is due right now. The cron trigger {SampleConfig.TelemetryCron} queues them every 5 minutes."
@@ -57,10 +77,16 @@ namespace WorkersDotNet
         /// sensor pushes its next due time minutes into the future, so the demo
         /// presses this to get work for the next run without waiting.
         /// </summary>
-        public async Task<Response> ResetAsync()
+        public async Task<Response> ResetAsync(Request request, ExecutionContext context)
         {
+            if (request.Method != "POST")
+                return Results.Error("Only POST is supported on /api/telemetry/reset", 405);
+
             await _telemetry.ResetAsync();
             var status = await _telemetry.ReadStatusAsync();
+
+            await ResponseCache.PurgeAsync(ResponseCache.KeyFor(request, "/api/telemetry"));
+
             var message = $"{status.Stats.Sensors} sensor(s) set to active and due now.";
 
             var result = new TelemetryRunResult(true, message, 0, new List<string>(), status);

@@ -35,7 +35,11 @@ ALLOWED_ORIGINS = "http://localhost:5217,https://localhost:7000"
 # account with this address registers (see /api/auth/register). Set it to the
 # email you want to be the default administrator, or leave blank to disable the
 # auto-promotion.
-DEFAULT_ADMIN_EMAIL = "admin@example.com"
+#
+# Left blank on purpose: this file is public, so a hard-coded address would let
+# anyone register it and become an admin. Set it with
+# `npx wrangler secret put DEFAULT_ADMIN_EMAIL` instead.
+DEFAULT_ADMIN_EMAIL = ""
 
 # Enables the Cache API in local development. Without this `wrangler dev`
 # answers caches.default.match() with "nothing cached" and silently drops

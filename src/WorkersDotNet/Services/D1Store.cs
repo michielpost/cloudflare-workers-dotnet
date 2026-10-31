@@ -61,6 +61,16 @@ namespace WorkersDotNet.Services
         }
 
         /// <summary>
+        /// Runs a non-query statement and returns how many rows it changed, so a
+        /// caller can tell an update that matched nothing from one that worked.
+        /// </summary>
+        public async Task<int> ExecuteChangesAsync(D1PreparedStatement stmt)
+        {
+            var result = await stmt.RunAsync();
+            return result is null || result.Meta is null ? 0 : result.Meta.Changes;
+        }
+
+        /// <summary>
         /// Runs a non-query statement and reports whether it applied. Used when
         /// the statement's success (e.g. a UNIQUE constraint) must be detected.
         /// </summary>

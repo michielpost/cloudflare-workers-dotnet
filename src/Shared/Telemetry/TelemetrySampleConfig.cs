@@ -30,4 +30,33 @@ public static partial class SampleConfig
 
     /// <summary>The real weather API the pipeline calls (no key needed).</summary>
     public const string WeatherApiName = "open-meteo.com";
+
+    /// <summary>
+    /// How many days of telemetry are kept. The cron trigger deletes every
+    /// reading and job from before the current UTC day, so the tables only ever
+    /// hold today's rows.
+    /// </summary>
+    /// <remarks>
+    /// The status read counts rows, so this window is also the ceiling on what
+    /// one read can cost: 3 sensors x 12 readings/hour x 24 hours is about 860
+    /// rows per table. Keep it in step with
+    /// <see cref="TelemetryStatusCacheSeconds"/> - a longer window needs a longer
+    /// cache to stay inside the D1 free tier.
+    /// </remarks>
+    public const int TelemetryRetentionDays = 1;
+
+    /// <summary>
+    /// Minutes after which a job that is still queued or retrying is treated as
+    /// dead and deleted. A job that has not finished in this long has lost its
+    /// queue message, so it would otherwise sit in the table forever and keep
+    /// showing up as pending work.
+    /// </summary>
+    public const int TelemetryStaleJobMinutes = 60;
+
+    /// <summary>
+    /// Seconds a GET /api/telemetry answer is served from the Cache API. The
+    /// telemetry page polls, so without this every open tab would read D1 every
+    /// few seconds.
+    /// </summary>
+    public const int TelemetryStatusCacheSeconds = 20;
 }

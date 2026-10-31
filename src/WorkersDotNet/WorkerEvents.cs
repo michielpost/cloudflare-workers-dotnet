@@ -82,13 +82,13 @@ namespace WorkersDotNet
                     if (attempts < SampleConfig.TelemetryMaxAttempts)
                     {
                         Log.Error($"Telemetry job {message.Body.JobId} failed on attempt {attempts}, retrying in {delay}s: {exception.Message}");
-                        await app.TelemetryService.MarkJobAsync(message.Body.JobId, "retrying", attempts, exception.Message);
+                        await app.TelemetryService.MarkJobAsync(message.Body.JobId, message.Body.Text, "retrying", attempts, exception.Message);
                         message.Retry(new QueueRetryOptions { DelaySeconds = delay });
                     }
                     else
                     {
                         Log.Error($"Telemetry job {message.Body.JobId} failed {attempts} times and is given up: {exception.Message}");
-                        await app.TelemetryService.MarkJobAsync(message.Body.JobId, "failed", attempts, exception.Message);
+                        await app.TelemetryService.MarkJobAsync(message.Body.JobId, message.Body.Text, "failed", attempts, exception.Message);
                         message.Ack();
                     }
                 }
@@ -109,7 +109,7 @@ namespace WorkersDotNet
 
             if (scheduled.Cron == SampleConfig.TelemetryCron)
             {
-                context.WaitUntil(app.TelemetryService.EnqueueDueAsync());
+                context.WaitUntil(RunTelemetryCronAsync(app.TelemetryService, scheduled.ScheduledTime.GetTime()));
                 return;
             }
 
@@ -118,6 +118,16 @@ namespace WorkersDotNet
                     scheduled.Cron,
                     scheduled.ScheduledTime.ToIsoString(),
                     false));
+        }
+
+        /// <summary>
+        /// The telemetry cron's work: queue the due sensors, then drop rows past
+        /// the retention window so the tables stay small.
+        /// </summary>
+        static async Task RunTelemetryCronAsync(TelemetryService telemetry, double scheduledTimeMs)
+        {
+            await telemetry.EnqueueDueAsync(scheduledTimeMs);
+            await telemetry.PruneAsync();
         }
     }
 }

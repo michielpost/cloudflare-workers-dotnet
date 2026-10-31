@@ -105,7 +105,10 @@ Every binding in `wrangler.toml` backs one sample, and each one also works local
 | `ASSETS` | `src/WorkersDotNet/dist/wwwroot` | Serves the published Blazor app, falling back to `index.html` for SPA routes |
 
 `[triggers] crons = ["0 * * * *", "*/5 * * * *"]` drives two handlers: the hourly scheduled-task
-sample, and the telemetry poll that enqueues the sensors whose `next_read_at` has passed.
+sample, and the telemetry poll that enqueues the sensors whose `next_read_at` has passed. The
+telemetry handler measures the next read from the trigger's **scheduled time**, not from the wall
+clock, so a trigger that fires a few milliseconds early or late cannot push a sensor's schedule
+further out on every run (which would silently turn a 5-minute sensor into a 10-minute one).
 
 | Route | Method | Sample |
 | ----- | ------ | ------ |
@@ -129,6 +132,42 @@ sample, and the telemetry poll that enqueues the sensors whose `next_read_at` ha
 
 Mutations return the resulting **snapshot** (the fresh list plus the counts), so a page never has to
 follow a write with a read.
+
+## Keeping D1 inside the free tier
+
+D1 bills **rows read**, not requests, and the free plan allows 5,000,000 rows per day. A query that
+scans a table once per row of another table can burn that budget with a few hundred requests, so the
+telemetry sample is written to keep every read proportional to a small, bounded window:
+
+- **Indexes** (`migrations/0003_hardening.sql`) cover every column the sample filters or sorts on:
+  `readings(sensor_id)`, `readings(reading_at)`, `jobs(sensor_id, status)` and `jobs(queued_at)`.
+  Without them each status read scanned the whole table.
+- **One aggregate query instead of one per sensor.** `TelemetryService.ReadStatusAsync` groups jobs
+  in SQL and derives the counters in C#, so the cost no longer grows with the number of sensors. The
+  reading count comes from the `done` jobs, because every stored reading is written by a job that
+  then moves to `done`.
+- **Retention.** The cron trigger deletes every reading and job from before the current UTC day
+  (`TelemetrySampleConfig.TelemetryRetentionDays`), so the tables only ever hold today's rows. It
+  also deletes jobs that have been stuck in `queued` or `retrying` for more than
+  `TelemetryStaleJobMinutes` (60 minutes), which clears work whose queue message was lost.
+- **Caching.** `GET /api/telemetry` is served from the Cache API for
+  `TelemetrySampleConfig.TelemetryStatusCacheSeconds` (20 seconds), so a polling page or a burst of
+  traffic costs one D1 read per window rather than one per request. The cache key ignores the query
+  string, and `POST /api/telemetry/run` and `/reset` purge it so a demo run shows up immediately.
+- **POST-only mutations.** `/api/telemetry/run` and `/api/telemetry/reset` reject anything but POST,
+  so a crawler following links cannot trigger work.
+
+Two things are worth doing in the Cloudflare dashboard as well, because they stop abuse before it
+reaches the worker:
+
+1. A **WAF rate limiting rule** on `/api/*` (for example 60 requests per minute per IP) so a script
+   cannot hammer the endpoints at all.
+2. **Billing notifications** (or a hard spend limit) on the account, so a surprise is an email
+   rather than an invoice.
+
+The D1 `database_id` in `wrangler.toml` is **not** a secret and does not need rotating: reading rows
+through the D1 HTTP API also requires the account ID and an API token, neither of which is in this
+repository.
 
 ## Adding a URL
 
@@ -317,6 +356,12 @@ The Durable Object migration (`[[migrations]] tag = "v1"` in `wrangler.toml`) is
 deploy, and the two cron triggers are registered with it. Trigger one on demand with
 `npx wrangler dev --test-scheduled` (locally) or by calling `POST /api/scheduled` /
 `POST /api/telemetry/run` through the deployed worker.
+
+`wrangler dev` does **not** fire cron triggers on its own, so the telemetry pipeline only advances
+when you call it. Start the dev server with `--test-scheduled` and hit
+`http://127.0.0.1:8787/__scheduled?cron=*/5+*+*+*+*`, or press **Run now** on the telemetry page.
+On a deployed worker the `*/5 * * * *` trigger fires continuously - the 5 minutes is the interval,
+not a lifetime - so the page keeps updating without anyone pressing anything.
 
 ## Conventions and compiler notes
 

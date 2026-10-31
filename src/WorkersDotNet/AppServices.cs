@@ -50,6 +50,9 @@ namespace WorkersDotNet
             var assets = environment.Assets("ASSETS");
             var defaultAdminEmail = environment.Variable(SampleConfig.DefaultAdminEmailVariable);
 
+            var allowedOrigins = CorsPolicy.ParseOrigins(
+                environment.Variable(CorsPolicy.AllowedOriginsVariable));
+
             var itemsService = new ItemsService(db);
             var kvService = new KvSampleService(kv);
             var r2Service = new R2SampleService(r2);
@@ -90,9 +93,6 @@ namespace WorkersDotNet
             // valid configuration here (the deployed frontend is served by this
             // same worker, so its calls are same-origin), so that case gets a
             // middleware that only refuses preflights.
-            var allowedOrigins = CorsPolicy.ParseOrigins(
-                environment.Variable(CorsPolicy.AllowedOriginsVariable));
-
             if (allowedOrigins.Length == 0)
             {
                 router.Use((request, route, next) => CorsPolicy.RefusePreflightAsync(request, next));
@@ -141,9 +141,9 @@ namespace WorkersDotNet
             router.Any("/api/auth/profile", (request, route) => Auth.UpdateProfileAsync(request));
             router.Any("/api/auth/roles", (request, route) => Auth.AssignRolesAsync(request));
             router.Any("/api/auth/users", (request, route) => Auth.UsersAsync(request));
-            router.Any("/api/telemetry", (request, route) => Telemetry.HandleAsync(request));
-            router.Any("/api/telemetry/run", (request, route) => Telemetry.RunAsync());
-            router.Any("/api/telemetry/reset", (request, route) => Telemetry.ResetAsync());
+            router.Any("/api/telemetry", (request, route) => Telemetry.HandleAsync(request, route.Ctx));
+            router.Any("/api/telemetry/run", (request, route) => Telemetry.RunAsync(request, route.Ctx));
+            router.Any("/api/telemetry/reset", (request, route) => Telemetry.ResetAsync(request, route.Ctx));
 
             // Anything else is the BlazorWebApp, served as static files through
             // the ASSETS binding.
